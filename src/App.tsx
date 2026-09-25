@@ -6,12 +6,15 @@ import { Markdown } from "./components/Markdown.js";
 import { ParticleOrb } from "./components/ParticleOrb.js";
 import { ReportCard } from "./components/ReportCard.js";
 import { ThinkingBlock } from "./components/ThinkingBlock.js";
+import { PlanCard } from "./components/PlanCard.js";
 import { QuestionCard } from "./components/QuestionCard.js";
+import { parsePlan } from "./model/plan.js";
 import { readCanvas } from "./lib/artifacts.js";
 import { useMonitor, type MonitorState } from "./lib/useMonitor.js";
 import { formatAnswers, hasPartialBlock, parseQuestions } from "./lib/questions.js";
 import { readTheme, storeTheme, watchSystemTheme, type Theme } from "./lib/theme.js";
 import { useAgent, type ChatMessage, type Verdict } from "./lib/useAgent.js";
+import type { Plan, PlanStatus } from "./model/plan.js";
 
 const MODEL_NAME = "Trion 1.5";
 
@@ -31,7 +34,24 @@ export default function App() {
   // opens it, or the agent produces something runnable and it opens itself.
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [canvasPinnedShut, setCanvasPinnedShut] = useState(false);
-  const { messages, running, usage, status, cooldown, send, stop, reset } = useAgent();
+  const {
+    messages,
+    running,
+    usage,
+    status,
+    cooldown,
+    send,
+    stop,
+    reset,
+    sessions,
+    sessionId,
+    openSession,
+    plan,
+    planStatus,
+    approvePlan,
+    requestPlanChanges,
+    workspaceFiles,
+  } = useAgent();
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -65,6 +85,22 @@ export default function App() {
       if (!running) void send(text, mode);
     },
     [mode, running, send],
+  );
+
+  const approveAndBuild = useCallback(() => {
+    if (!plan) return;
+    approvePlan();
+    // The plan travels with the request, not through state: this call is what
+    // unlocks the tools, so it cannot wait for a re-render.
+    void send("Plan approved. Build it exactly as agreed.", mode, plan);
+  }, [approvePlan, mode, plan, send]);
+
+  const sendPlanChanges = useCallback(
+    (note: string) => {
+      const text = requestPlanChanges(note);
+      if (text) void send(`Change the plan: ${text}`, mode);
+    },
+    [mode, requestPlanChanges, send],
   );
 
   const canvas = useMemo(() => readCanvas(messages), [messages]);
@@ -119,9 +155,22 @@ export default function App() {
 
           <div className="rail-section">
             <span className="rail-caption">Today</span>
-            {started ? (
+            {sessions.length || started ? (
               <ul className="session-list">
-                <li className="session on">{messages[0]?.content.slice(0, 44)}</li>
+                {started && !sessions.some((item) => item.id === sessionId) && (
+                  <li className="session on">{messages[0]?.content.slice(0, 44)}</li>
+                )}
+                {sessions.map((item) => (
+                  <li key={item.id}>
+                    <button
+                      className={`session${item.id === sessionId ? " on" : ""}`}
+                      onClick={() => void openSession(item.id)}
+                      disabled={running}
+                    >
+                      {item.title}
+                    </button>
+                  </li>
+                ))}
               </ul>
             ) : (
               <p className="rail-empty">Nothing yet. Describe what you want built.</p>
@@ -138,7 +187,9 @@ export default function App() {
               <dt>Output</dt>
               <dd>{usage ? `${usage.completionTokens} tok` : "—"}</dd>
               <dt>Files</dt>
-              <dd>{canvas.artifacts.length || "—"}</dd>
+              <dd>{workspaceFiles.length || canvas.artifacts.length || "—"}</dd>
+              <dt>Plan</dt>
+              <dd>{planStatus === "none" ? "—" : planStatus}</dd>
               <dt>Review</dt>
               <dd className={monitor.verdict?.status === "verified" ? "live" : ""}>
                 {monitor.status === "reviewing" || monitor.status === "capturing"
@@ -172,6 +223,10 @@ export default function App() {
               answer={answerQuestions}
               usage={usage}
               monitor={monitor}
+              plan={plan}
+              planStatus={planStatus}
+              onApprovePlan={approveAndBuild}
+              onChangePlan={sendPlanChanges}
             />
           ) : (
             <Welcome running={running} pick={setDraft} />
@@ -233,6 +288,10 @@ function Chat({
   answer,
   usage,
   monitor,
+  plan,
+  planStatus,
+  onApprovePlan,
+  onChangePlan,
 }: {
   messages: ChatMessage[];
   running: boolean;
@@ -242,6 +301,10 @@ function Chat({
   answer: (text: string) => void;
   usage: { promptTokens: number; completionTokens: number } | null;
   monitor: MonitorState;
+  plan: Plan | null;
+  planStatus: PlanStatus;
+  onApprovePlan: () => void;
+  onChangePlan: (note: string) => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -249,6 +312,12 @@ function Chat({
   }, [messages]);
 
   const startedAt = messages[0]?.at ?? Date.now();
+  // The plan belongs to the turn that proposed it.
+  const lastPlanTurn = messages.reduce(
+    (found, message, i) =>
+      message.role === "assistant" && parsePlan(message.content).plan ? i : found,
+    -1,
+  );
 
   return (
     <div className="chat">
@@ -271,7 +340,7 @@ function Chat({
                 {message.error ? (
                   message.content
                 ) : (
-                  <Markdown text={parseQuestions(message.content).text} />
+                  <Markdown text={parsePlan(parseQuestions(message.content).text).text} />
                 )}
                 {running && i === messages.length - 1 && !message.content && (
                   <span className="dots">
@@ -281,6 +350,16 @@ function Chat({
                   </span>
                 )}
               </div>
+
+              {plan && i === lastPlanTurn && (
+                <PlanCard
+                  plan={plan}
+                  status={planStatus}
+                  running={running}
+                  onApprove={onApprovePlan}
+                  onChange={onChangePlan}
+                />
+              )}
 
               {!running && i === messages.length - 1 && !message.error && (
                 <Clarify content={message.content} answer={answer} />

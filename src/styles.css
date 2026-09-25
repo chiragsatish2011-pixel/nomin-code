@@ -656,3 +656,58 @@ button { font: inherit; color: inherit; cursor: pointer; border: none; backgroun
 .report-evidence {
   margin: 12px 0 0; font-family: var(--mono); font-size: 11px; color: var(--muted-soft);
 }
+
+/* ---------- the plan, and the gate in front of it ---------- */
+.plan-card {
+  margin: 14px 0 4px; padding: 16px 18px;
+  border: 1px solid var(--hairline); border-left: 2px solid var(--purple);
+  border-radius: 12px; background: var(--surface);
+}
+.plan-card.approved { border-left-color: var(--green); }
+.plan-card.changes-requested { border-left-color: var(--amber); }
+.plan-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.plan-label {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase;
+  color: var(--muted-soft);
+}
+.plan-head .verdict { margin-left: 0; }
+.plan-gate { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--purple); }
+.plan-understanding { margin: 0 0 6px; font-size: 13.5px; color: var(--muted); line-height: 1.55; }
+.plan-objective { margin: 0 0 12px; font-size: 15px; font-weight: 600; line-height: 1.5; }
+.plan-steps { margin: 0 0 14px; padding-left: 20px; display: flex; flex-direction: column; gap: 7px; }
+.plan-steps li { font-size: 14px; line-height: 1.5; }
+.plan-steps strong { font-weight: 500; }
+.plan-steps span { display: block; font-size: 12.5px; color: var(--muted-soft); margin-top: 2px; }
+.plan-facts {
+  margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px;
+  font-size: 12.5px; padding-top: 12px; border-top: 1px solid var(--hairline-soft);
+}
+.plan-facts dt { color: var(--muted-soft); font-weight: 600; }
+.plan-facts dd { margin: 0; color: var(--muted); line-height: 1.5; }
+.plan-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+.plan-actions .ghost {
+  padding: 8px 14px; border-radius: 10px; font-size: 13.5px; color: var(--muted);
+  border: 1px solid var(--hairline);
+}
+.plan-actions .ghost:hover { background: var(--surface-hi); color: var(--ink); }
+.plan-actions .primary {
+  padding: 8px 16px; border-radius: 10px; font-size: 13.5px; font-weight: 600;
+  background: var(--purple); color: #fff;
+}
+.plan-actions .primary:disabled { background: var(--surface-hi); color: var(--muted-soft); cursor: not-allowed; }
+.plan-edit { margin-top: 12px; }
+.plan-edit textarea {
+  width: 100%; padding: 10px 12px; border-radius: 10px; resize: vertical;
+  border: 1px solid var(--hairline); background: var(--canvas); color: var(--ink);
+  font: inherit; font-size: 14px; line-height: 1.5;
+}
+.plan-edit textarea:focus { outline: none; border-color: rgba(113, 50, 245, 0.5); }
+
+/* session list entries are buttons now */
+.session-list button.session {
+  width: 100%; text-align: left; border: none;
+  padding: 10px 12px; border-radius: 10px; font-size: 14px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.session-list button.session:hover { background: var(--surface-hi); color: var(--ink); }
+.session-list button.session:disabled { cursor: not-allowed; opacity: 0.6; }

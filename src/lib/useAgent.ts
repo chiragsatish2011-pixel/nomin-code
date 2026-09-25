@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentEvent } from "@nomin/work-tree";
+import { parsePlan, type Plan, type PlanStatus } from "../model/plan.js";
+import {
+  listSessions,
+  loadLastSession,
+  loadSession,
+  newSessionId,
+  saveSession,
+  titleFor,
+  type SessionRecord,
+} from "./persist.js";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -23,8 +33,14 @@ export interface Verdict {
   report?: string;
 }
 
+export interface WorkspaceFileRef {
+  path: string;
+  bytes: number;
+}
+
 interface Frame {
-  kind: "tree" | "text" | "error" | "usage" | "verdict" | "end";
+  kind: "tree" | "text" | "error" | "usage" | "verdict" | "files" | "end";
+  files?: WorkspaceFileRef[];
   verdict?: Verdict;
   text?: string;
   message?: string;
@@ -49,7 +65,54 @@ export function useAgent() {
   const [usage, setUsage] = useState<Usage | null>(null);
   const [waitUntil, setWaitUntil] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [sessionId, setSessionId] = useState(newSessionId);
+  const [sessions, setSessions] = useState<SessionRecord[]>([]);
+  const [plan, setPlan] = useState<Plan | null>(null);
+  const [planStatus, setPlanStatus] = useState<PlanStatus>("none");
+  const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFileRef[]>([]);
+  const [restored, setRestored] = useState(false);
   const abort = useRef<AbortController | null>(null);
+
+  // Restore the last session on open, so a reload resumes rather than resets.
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      const [record, all] = await Promise.all([loadLastSession(), listSessions()]);
+      if (!live) return;
+      setSessions(all);
+      if (record) {
+        setSessionId(record.id);
+        setMessages(record.messages);
+        setPlan(record.plan);
+        setPlanStatus(record.planStatus);
+        setEvents(record.messages[record.messages.length - 1]?.events ?? []);
+      }
+      setRestored(true);
+    })();
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  // Persist whenever the conversation or the plan moves on.
+  useEffect(() => {
+    if (!restored || running || !messages.length) return;
+    const record: SessionRecord = {
+      id: sessionId,
+      title: titleFor(messages),
+      createdAt: messages[0]?.at ?? Date.now(),
+      updatedAt: Date.now(),
+      messages,
+      plan,
+      planStatus,
+      step: 0,
+      mode: "balanced",
+    };
+    const timer = window.setTimeout(() => {
+      void saveSession(record).then(() => listSessions().then(setSessions));
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [messages, plan, planStatus, restored, running, sessionId]);
 
   // Only tick while a cooldown is actually running.
   useEffect(() => {
@@ -60,8 +123,27 @@ export function useAgent() {
 
   const reset = useCallback(() => {
     abort.current?.abort();
+    setSessionId(newSessionId());
     setMessages([]);
     setEvents([]);
+    setUsage(null);
+    setWaitUntil(null);
+    setRunning(false);
+    setPlan(null);
+    setPlanStatus("none");
+    setWorkspaceFiles([]);
+  }, []);
+
+  /** Open a stored session and continue it where it stopped. */
+  const openSession = useCallback(async (id: string) => {
+    abort.current?.abort();
+    const record = await loadSession(id);
+    if (!record) return;
+    setSessionId(record.id);
+    setMessages(record.messages);
+    setPlan(record.plan);
+    setPlanStatus(record.planStatus);
+    setEvents(record.messages[record.messages.length - 1]?.events ?? []);
     setUsage(null);
     setWaitUntil(null);
     setRunning(false);
@@ -73,7 +155,13 @@ export function useAgent() {
   }, []);
 
   const send = useCallback(
-    async (text: string, mode: "quick" | "balanced" | "deep" = "balanced") => {
+    async (
+      text: string,
+      mode: "quick" | "balanced" | "deep" = "balanced",
+      // Passed explicitly on approval: reading it from state here would use
+      // the value captured before the click, and the tools would never unlock.
+      planOverride?: Plan | null,
+    ) => {
       const prompt = text.trim();
       if (!prompt || abort.current) return;
 
@@ -137,7 +225,18 @@ export function useAgent() {
 
       function apply(frame: Frame) {
         if (frame.kind === "text" && frame.text) {
-          setMessages((prev) => appendText(prev, frame.text!));
+          setMessages((prev) => {
+            const next = appendText(prev, frame.text!);
+            const last = next[next.length - 1];
+            if (last?.role === "assistant" && planStatus !== "approved") {
+              const found = parsePlan(last.content).plan;
+              if (found) {
+                setPlan(found);
+                setPlanStatus("proposed");
+              }
+            }
+            return next;
+          });
         } else if (frame.kind === "tree" && frame.event) {
           const event = frame.event;
           if (event.type === "cooldown.started") {
@@ -152,6 +251,8 @@ export function useAgent() {
             promptTokens: frame.promptTokens ?? 0,
             completionTokens: frame.completionTokens ?? 0,
           });
+        } else if (frame.kind === "files" && frame.files) {
+          setWorkspaceFiles(frame.files);
         } else if (frame.kind === "verdict" && frame.verdict) {
           const verdict = frame.verdict;
           setMessages((prev) => attachVerdict(prev, verdict));
@@ -160,8 +261,20 @@ export function useAgent() {
         }
       }
     },
-    [messages],
+    [messages, plan, planStatus, sessionId],
   );
+
+  /** Approve the plan. This is what unlocks the tools for the next turn. */
+  const approvePlan = useCallback(() => {
+    if (!plan) return;
+    setPlanStatus("approved");
+  }, [plan]);
+
+  /** Send the plan back with changes; the agent replans, still without tools. */
+  const requestPlanChanges = useCallback((note: string) => {
+    setPlanStatus("changes-requested");
+    return note.trim();
+  }, []);
 
   const secondsLeft = waitUntil ? Math.max(0, Math.ceil((waitUntil - now) / 1000)) : 0;
 
@@ -177,7 +290,25 @@ export function useAgent() {
     ? `Rate limit reached. Waiting ${secondsLeft}s for cooldown. Work state preserved — resuming the same step.`
     : null;
 
-  return { messages, events, running, usage, status, cooldown, send, stop, reset };
+  return {
+    messages,
+    events,
+    running,
+    usage,
+    status,
+    cooldown,
+    send,
+    stop,
+    reset,
+    sessionId,
+    sessions,
+    openSession,
+    plan,
+    planStatus,
+    approvePlan,
+    requestPlanChanges,
+    workspaceFiles,
+  };
 }
 
 /** Events and verdicts belong to the turn that produced them. */

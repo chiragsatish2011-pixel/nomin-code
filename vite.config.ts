@@ -31,6 +31,23 @@ function agentApi(env: Record<string, string>): Plugin {
       // after the answer has already landed, with a rendering when it has one.
       // Evidence baseline: capture / diff, used by the manager before it wakes
       // the doctors. Kept on the server because it touches the filesystem.
+      // Evidence baseline: capture / diff, used by the manager before it wakes
+      // the doctors. Kept on the server because it touches the filesystem.
+      // Direct tool exercise — used to test the workspace sandbox.
+      server.middlewares.use("/api/tool", async (req: IncomingMessage, res: ServerResponse) => {
+        const mod = (await server.ssrLoadModule(agentEntry)) as typeof import("./src/model/index.js");
+        const body = await readJson(req);
+        res.setHeader("Content-Type", "application/json");
+        try {
+          const workspace = await mod.Workspace.open(String(body.sessionId ?? "test"));
+          const outcome = await mod.runTool(workspace, String(body.name), JSON.stringify(body.args ?? {}));
+          res.end(JSON.stringify({ root: workspace.root, ...outcome }));
+        } catch (error) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ error: error instanceof Error ? error.message : "failed" }));
+        }
+      });
+
       server.middlewares.use("/api/evidence", async (req: IncomingMessage, res: ServerResponse) => {
         const mod = (await server.ssrLoadModule(agentEntry)) as typeof import("./src/model/index.js");
         const body = req.method === "POST" ? await readJson(req) : {};
@@ -118,6 +135,8 @@ function agentApi(env: Record<string, string>): Plugin {
             title: body.title,
             model: body.model,
             mode: body.mode,
+            sessionId: body.sessionId,
+            plan: body.plan ?? null,
             signal: controller.signal,
           })) {
             res.write(`data: ${JSON.stringify(frame)}\n\n`);

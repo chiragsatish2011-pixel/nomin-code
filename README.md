@@ -159,6 +159,42 @@ broken" from "this was always like that".
 It will not overwrite a green baseline with a broken one: recording a failing
 state as normal is how a self-healing system learns to ignore its own illness.
 
+## Tools, and the gate in front of them
+
+A turn is in one of two modes, enforced in code rather than asked for in a
+prompt:
+
+**Planning.** No tools are sent. Trion can think, ask and propose a plan — it
+cannot touch the workspace however it is asked. The plan arrives as a card
+with Approve or Request changes.
+
+**Execution.** Approval hands the plan back with the request, and only then do
+the tools travel with it. The plan is passed explicitly, not read from state,
+so approval cannot be lost to a re-render.
+
+### The workspace
+
+Each session owns a real directory (`.nomin/workspaces/<id>`). Four tools act
+on it — `list_files`, `read_file`, `write_file`, `run_command` — and three
+rules make that safe to hand to a model:
+
+- **Every path is resolved and checked.** `..`, absolute paths and symlinks are
+  rejected before anything is opened.
+- **Commands are an allowlist** (`npm`, `npx`, `node`, `tsc`, `vite`), and any
+  argument carrying shell punctuation is refused — Windows needs a shell for
+  `.cmd` shims, so the arguments are guarded instead.
+- **Credentials never reach a child process.** Verified: a script the model
+  writes and runs sees `{"leaked":[]}`.
+
+There is no delete and no rename. Destroying work is a decision for a person.
+
+## Sessions that survive a reload
+
+Every session is written to IndexedDB — conversation, work-tree events, the
+approved plan and its status — and restored on open. The sidebar lists real
+sessions and switches between them. Files live on disk, so a reload resumes
+against the same workspace rather than starting again.
+
 ## Rate limits
 
 429s and the upstream 500/502/503/504 (which appear under load) are treated

@@ -87,7 +87,7 @@ export function collectArtifacts(messages: ChatMessage[]): Artifact[] {
       const code = (match[2] ?? "").trimEnd();
       if (!code.trim()) continue;
       // nomin-questions blocks are internal protocol — never surface as artifacts.
-      if (info.startsWith("nomin-questions")) continue;
+      if (info.startsWith("nomin-questions") || info.startsWith("nomin-plan")) continue;
       const [langRaw, ...rest] = info.split(/\s+/);
       const lang = (langRaw ?? "").toLowerCase();
       // ```ts src/app.ts  → the second token is a filename
@@ -106,7 +106,7 @@ export function collectArtifacts(messages: ChatMessage[]): Artifact[] {
     // of its time inside one. Treat it as a file in progress so the canvas can
     // show it instead of waiting for a closing marker that may never come.
     const open = openFence(message.content);
-    if (open) {
+    if (open && !open.info.startsWith("nomin-")) {
       const [langRaw, ...rest] = open.info.split(/\s+/);
       const lang = (langRaw ?? "").toLowerCase();
       const named = rest.find((part) => part.includes("."));

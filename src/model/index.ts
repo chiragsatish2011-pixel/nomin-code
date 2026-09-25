@@ -5,6 +5,11 @@ export { createSupervisor, Supervisor } from "./supervisor.js";
 export { DOCTORS, availableDoctors, doctorModel } from "./doctors.js";
 export type { DoctorId, DoctorSpec } from "./doctors.js";
 export { CrpmScheduler, splitWork } from "./crpm.js";
+export { parsePlan, planBrief, planIncoming } from "./plan.js";
+export type { Plan, PlanStep, PlanStatus } from "./plan.js";
+export { TOOLS, runTool } from "./tools.js";
+export { Workspace } from "./workspace.js";
+export type { WorkspaceFile, CommandResult } from "./workspace.js";
 export type { LaneBudget, LaneState } from "./crpm.js";
 export {
   captureBaseline,

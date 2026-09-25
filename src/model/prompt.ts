@@ -30,29 +30,35 @@ Always put your answer in the visible reply, never empty, and never reveal your 
  * Attached only for substantial work. ~85 tokens, and it goes at the end of
  * the message list so it never disturbs the cached prefix.
  */
-export const WORK_PROMPT = `For this task: if requirements are genuinely missing, ask first — one short line, then a fenced block:
+export const WORK_PROMPT = `You have tools and an approved plan. Build it for real:
+- write_file writes complete files to the workspace; never paste a whole file into the reply and never write a partial file or a placeholder
+- read_file before editing anything that already exists; list_files when you resume work
+- run_command (npm, npx, node, tsc, vite) to install, build and test what you wrote
+- follow the approved plan in order, then verify: run it, read the output, fix what fails, run it again
+- when you reply, say briefly what you did and what you checked. State plainly what is done, partial or blocked. Never call work verified without evidence.`;
+
+export const PLAN_PROMPT = `This needs a plan before any work starts. You have no tools yet.
+
+If requirements are genuinely missing, ask first — one short line, then:
 
 \`\`\`nomin-questions
 {"questions":[{"id":"stack","question":"...?","options":[{"label":"...","detail":"..."}]}]}
 \`\`\`
 
-Max 4 questions, 2-4 options each, best option first. Ask nothing you can reasonably assume.
+Otherwise write the plan — two or three lines of prose, then:
 
-Otherwise build it properly and completely:
-- Open with 2-3 lines: what you understood and how you will build it.
-- Emit every file in full, each in its own fence tagged with language and path: \`\`\`html index.html
-- Never abbreviate. No "rest of the code here", no placeholder comments, no TODOs.
-- One page means one complete HTML file. Anything larger means real structure: package.json plus source files, each complete.
-- A landing page is finished when it has real sections, real copy, responsive CSS and working interactions — not a skeleton.
-- Close with one line on what to check, and say plainly what is done, partial or blocked.
-Never call work verified without evidence.`;
+\`\`\`nomin-plan
+{"understanding":"what you were asked for","objective":"one sentence","steps":[{"title":"...","detail":"..."}],"files":["index.html"],"assumptions":["..."],"risks":["..."],"testing":"how you will test it","verification":"what evidence proves it works","output":"what the user ends up with"}
+\`\`\`
+
+Max 8 steps, each one a real action. Do not write any code yet — the plan is the deliverable of this turn.`;
 
 /** One-line recovery nudge, used only when a turn came back empty. */
 export const EMPTY_RETRY_NUDGE =
   "Answer the previous message directly in your reply. Do not leave the reply empty.";
 
 /** Approximate token cost of each tier, for budgeting and telemetry. */
-export const PROMPT_TOKENS = { core: 95, work: 85 } as const;
+export const PROMPT_TOKENS = { core: 95, work: 120, plan: 190 } as const;
 
 const WORK_SIGNALS = [
   "build",
