@@ -18,5 +18,5 @@
       "@nomin/model": ["src/model/index.ts"]
     }
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "api", "vite.config.ts"]
 }

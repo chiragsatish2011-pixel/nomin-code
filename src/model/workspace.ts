@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
@@ -38,6 +39,17 @@ export interface CommandResult {
 }
 
 const ROOT_DIR = ".nomin/workspaces";
+
+/**
+ * Serverless hosts give you a read-only deployment and one writable directory.
+ * The workspace goes there, and the caller is told plainly that it does not
+ * outlive the request — pretending otherwise would lose the user's work
+ * silently.
+ */
+const serverless = () =>
+  Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NETLIFY);
+
+const workspaceBase = (base: string) => (serverless() ? join(tmpdir(), "nomin") : join(base, ROOT_DIR));
 const MAX_FILE_BYTES = 512 * 1024;
 const MAX_OUTPUT = 8000;
 const COMMAND_TIMEOUT_MS = 120_000;
@@ -64,7 +76,7 @@ export class Workspace {
 
   static async open(sessionId: string, base = process.cwd()): Promise<Workspace> {
     const safeId = sessionId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64) || "default";
-    const root = join(base, ROOT_DIR, safeId);
+    const root = join(workspaceBase(base), safeId);
     await mkdir(root, { recursive: true });
     return new Workspace(safeId, root);
   }
@@ -150,6 +162,11 @@ export class Workspace {
 
   /** Run one allowlisted command inside the workspace. */
   async run(command: string, args: string[] = []): Promise<CommandResult> {
+    if (serverless()) {
+      throw new Error(
+        "Commands cannot run on this deployment — it has no package manager or writable install directory. Write the files; they can be run locally or in the preview container.",
+      );
+    }
     if (!ALLOWED_COMMANDS.has(command)) {
       throw new Error(
         `"${command}" is not an allowed command. Allowed: ${[...ALLOWED_COMMANDS].join(", ")}.`,

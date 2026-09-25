@@ -209,6 +209,16 @@ ${content}` }
           }),
         });
 
+        // A deployment without the backend answers with the SPA's index.html.
+        // Saying so beats a silent stream that never produces a token.
+        const contentType = response.headers.get("content-type") ?? "";
+        if (!response.ok || !contentType.includes("text/event-stream")) {
+          throw new Error(
+            response.status === 404 || contentType.includes("text/html")
+              ? "The agent backend is not responding on this deployment. Check that the API functions are deployed and the credentials are set."
+              : `The agent backend returned ${response.status}.`,
+          );
+        }
         if (!response.body) throw new Error("No response stream");
         const reader = response.body.getReader();
         const decoder = new TextDecoder();

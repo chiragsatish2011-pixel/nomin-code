@@ -221,6 +221,69 @@ Two things worth knowing:
 - Nothing is stored. Frames are built in memory and sent straight to the vision
   model, so there is no upload directory to sweep and nothing to leak later.
 
+## Deploying
+
+The API is not part of the Vite dev server any more — it lives in
+`src/server/handlers.ts` and is mounted two ways: as middleware locally, and as
+functions in `api/` on Vercel. One implementation, so an endpoint cannot work
+on a laptop and be missing in production.
+
+```
+api/chat.ts       one agent turn, streamed
+api/review.ts     the manager's verdict
+api/vision.ts     frames in, words out
+api/evidence.ts   the baseline (server hosts only)
+api/health.ts     what this deployment can actually do
+```
+
+### Set the credentials on the host
+
+A deployment with no keys serves the interface and nothing else. In Vercel →
+Settings → Environment Variables, add for **Production, Preview and
+Development**:
+
+| Variable | Needed for |
+|---|---|
+| `NVIDIA_API_KEY` | Trion 1.5 — without it nothing runs |
+| `NVIDIA_BASE_URL` | the provider endpoint |
+| `NOMIN_SUPERVISOR_API_KEY` | the manager, and the vision fallback |
+| `NOMIN_VISION_API_KEY` | optional: a separate key for vision |
+| `NOMIN_DOCTOR_1..6_API_KEY` | the doctor team |
+
+Redeploy after adding them — Vercel only injects variables at build time.
+
+Then check `/api/health`. It reports which credentials are present (never their
+values) and what the host can do:
+
+```json
+{ "ok": true, "worker": true, "manager": true, "vision": true, "doctors": 6,
+  "environment": "serverless",
+  "capabilities": { "tools": true, "commands": false, "evidence": false } }
+```
+
+### What changes on a serverless host
+
+The deployment is read-only and each request is its own process, so:
+
+- **The workspace moves to the platform's temp directory.** Files are written
+  for the turn that writes them; they do not outlive it. The chat, the plan and
+  the work tree still persist — those live in the browser.
+- **`run_command` is refused**, with the reason. There is no package manager
+  and nowhere to install to. The agent writes files; they run in the preview
+  container or on your machine.
+- **The evidence baseline is unavailable.** It reads the project's own source
+  and runs its typecheck, neither of which exists there.
+
+Nomin reports each of these rather than failing quietly, and `/api/health`
+states them up front.
+
+### Long turns
+
+A build can take minutes. `vercel.json` asks for `maxDuration: 300` on
+`api/chat`, which needs a **Pro** plan; Hobby caps functions at 60 seconds and
+will cut a long build off mid-stream. On Hobby, keep to Quick or Balanced mode,
+or run the dev server locally for real builds.
+
 ## Rate limits
 
 429s and the upstream 500/502/503/504 (which appear under load) are treated
