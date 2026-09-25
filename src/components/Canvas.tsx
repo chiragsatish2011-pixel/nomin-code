@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Artifact, CanvasState } from "../lib/artifacts.js";
+import { assemble, type Build, type WorkspaceSnapshot } from "../lib/workspace.js";
 import { checkSupport, runProject, type RunState } from "../lib/webcontainer.js";
 
 type Tab = "preview" | "code";
@@ -23,10 +24,16 @@ export function Canvas({
   state,
   running,
   onClose,
+  workspace,
+  activeBuild,
+  onSelectBuild,
 }: {
   state: CanvasState;
   running: boolean;
   onClose: () => void;
+  workspace: WorkspaceSnapshot;
+  activeBuild: string | null;
+  onSelectBuild: (entry: string) => void;
 }) {
   const [tab, setTab] = useState<Tab>("preview");
   const [viewport, setViewport] = useState<Viewport>("desktop");
@@ -35,12 +42,23 @@ export function Canvas({
 
   const project = useProject(state, nonce);
   const frame = VIEWPORTS[viewport];
-  const artifact = state.artifacts[Math.min(selected, state.artifacts.length - 1)];
+
+  // The workspace is the truth when the agent used tools; the chat is only the
+  // fallback for quick answers that never opened one.
+  const build = workspace.builds.find((item) => item.entry === activeBuild) ?? workspace.builds[0];
+  const fromWorkspace = Boolean(build);
+  const document = build ? assemble(build, workspace.files) : state.document;
+
+  const codeFiles: Array<{ name: string; code: string }> = fromWorkspace
+    ? workspace.files.map((file) => ({ name: file.path, code: file.content }))
+    : state.artifacts.map((item: Artifact) => ({ name: item.name, code: item.code }));
+  const artifact = codeFiles[Math.min(selected, codeFiles.length - 1)];
+  const previewable = fromWorkspace || state.kind === "html";
 
   // A fresh build should be visible without asking for it.
   useEffect(() => {
-    if (state.kind === "html" || state.kind === "project") setTab("preview");
-  }, [state.kind, state.artifacts.length]);
+    if (previewable || state.kind === "project") setTab("preview");
+  }, [previewable, state.kind, state.artifacts.length, activeBuild]);
 
   return (
     <section className="canvas">
@@ -50,12 +68,20 @@ export function Canvas({
             <PlayIcon /> Preview
           </button>
           <button className={tab === "code" ? "on" : ""} onClick={() => setTab("code")}>
-            <CodeIcon /> Code{state.artifacts.length ? ` ${state.artifacts.length}` : ""}
+            <CodeIcon /> Code{codeFiles.length ? ` ${codeFiles.length}` : ""}
           </button>
         </nav>
 
+        {workspace.builds.length > 1 && (
+          <BuildPicker
+            builds={workspace.builds}
+            active={build?.entry ?? null}
+            onSelect={onSelectBuild}
+          />
+        )}
+
         <div className="canvas-tools">
-          {tab === "preview" && state.kind !== "empty" && (
+          {tab === "preview" && (previewable || state.kind !== "empty") && (
             <>
               <div className="viewport-switch">
                 {(Object.keys(VIEWPORTS) as Viewport[]).map((key) => (
@@ -82,12 +108,12 @@ export function Canvas({
 
       <div className="canvas-body">
         {tab === "preview" ? (
-          state.kind === "html" ? (
+          previewable ? (
             <div className="stage-frame" data-viewport={viewport}>
               <iframe
-                key={nonce}
+                key={`${nonce}-${build?.entry ?? "chat"}`}
                 title="Preview"
-                srcDoc={state.document}
+                srcDoc={document}
                 sandbox="allow-scripts allow-forms allow-modals"
                 style={frame.width ? { width: frame.width, height: frame.height ?? "100%" } : undefined}
               />
@@ -104,10 +130,10 @@ export function Canvas({
               }
             />
           )
-        ) : state.artifacts.length && artifact ? (
+        ) : codeFiles.length && artifact ? (
           <CodeView
-            artifacts={state.artifacts}
-            selected={Math.min(selected, state.artifacts.length - 1)}
+            artifacts={codeFiles}
+            selected={Math.min(selected, codeFiles.length - 1)}
             onSelect={setSelected}
             artifact={artifact}
           />
@@ -229,16 +255,61 @@ function ProjectPreview({
 
 /* ---------------- code view ---------------- */
 
+/** Switch between the things this session has built. */
+function BuildPicker({
+  builds,
+  active,
+  onSelect,
+}: {
+  builds: Build[];
+  active: string | null;
+  onSelect: (entry: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const current = builds.find((build) => build.entry === active) ?? builds[0];
+
+  return (
+    <div className="build-picker">
+      <button className="build-current" onClick={() => setOpen(!open)} type="button">
+        {current?.title ?? "Builds"}
+        <span className={`caret-icon${open ? " up" : ""}`}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M6 9l6 6 6-6" />
+          </svg>
+        </span>
+      </button>
+      {open && (
+        <div className="build-menu">
+          {builds.map((item) => (
+            <button
+              key={item.entry}
+              className={item.entry === active ? "on" : ""}
+              onClick={() => {
+                onSelect(item.entry);
+                setOpen(false);
+              }}
+              type="button"
+            >
+              <span className="build-title">{item.title}</span>
+              <span className="build-path">{item.entry}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CodeView({
   artifacts,
   selected,
   onSelect,
   artifact,
 }: {
-  artifacts: Artifact[];
+  artifacts: Array<{ name: string; code: string }>;
   selected: number;
   onSelect: (index: number) => void;
-  artifact: Artifact;
+  artifact: { name: string; code: string };
 }) {
   const [copied, setCopied] = useState(false);
   return (

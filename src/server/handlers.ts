@@ -3,6 +3,7 @@ import { runTurn } from "../model/agent.js";
 import { captureBaseline, diffFromBaseline, isStale, loadBaseline } from "../model/evidence.js";
 import { createSupervisor } from "../model/supervisor.js";
 import { describeMedia, visionContext } from "../model/vision.js";
+import { Workspace } from "../model/workspace.js";
 
 /**
  * The agent API, written once.
@@ -79,6 +80,7 @@ export async function handleChat(req: IncomingMessage, res: ServerResponse): Pro
       mode: body.mode,
       sessionId: body.sessionId,
       plan: body.plan ?? null,
+      files: Array.isArray(body.files) ? body.files : undefined,
       signal: controller.signal,
     })) {
       res.write(`data: ${JSON.stringify(frame)}\n\n`);
@@ -180,6 +182,51 @@ export async function handleEvidence(req: IncomingMessage, res: ServerResponse):
     json(res, 500, { error: error instanceof Error ? error.message : "failed" });
   }
 }
+
+/**
+ * POST /api/files — the workspace as the canvas sees it.
+ *
+ * The canvas used to read code out of the chat, which stopped working the
+ * moment the agent started writing real files instead of pasting them. This
+ * returns what is actually on disk: the listing, and the contents of the text
+ * files small enough to render.
+ */
+export async function handleFiles(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = await readJson(req);
+  const sessionId = String(body.sessionId ?? "");
+  if (!sessionId) {
+    json(res, 400, { error: "A sessionId is required." });
+    return;
+  }
+
+  try {
+    const workspace = await Workspace.open(sessionId);
+    const listing = await workspace.list();
+    const wanted = listing.filter((file) => READABLE.test(file.path) && file.bytes <= MAX_READ_BYTES);
+
+    const files = await Promise.all(
+      wanted.map(async (file) => ({
+        path: file.path,
+        bytes: file.bytes,
+        modified: file.modified,
+        content: await workspace.read(file.path).catch(() => ""),
+      })),
+    );
+
+    json(res, 200, {
+      files,
+      // Files too large or too binary to render still belong in the listing.
+      others: listing
+        .filter((file) => !wanted.includes(file))
+        .map((file) => ({ path: file.path, bytes: file.bytes, modified: file.modified })),
+    });
+  } catch (error) {
+    json(res, 500, { error: error instanceof Error ? error.message : "Could not read the workspace." });
+  }
+}
+
+const READABLE = /\.(html?|css|m?js|jsx|tsx?|json|md|txt|svg|ya?ml)$/i;
+const MAX_READ_BYTES = 400_000;
 
 /** GET /api/health — what this deployment can actually do. */
 export function handleHealth(_req: IncomingMessage, res: ServerResponse): void {

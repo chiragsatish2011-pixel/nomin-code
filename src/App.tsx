@@ -54,6 +54,9 @@ export default function App() {
     approvePlan,
     requestPlanChanges,
     workspaceFiles,
+    workspace,
+    activeBuild,
+    setActiveBuild,
   } = useAgent();
 
   useEffect(() => {
@@ -130,10 +133,11 @@ export default function App() {
   const monitor = useMonitor(messages, canvas, running);
   const started = messages.length > 0;
 
-  const runnable = canvas.kind === "html" || canvas.kind === "project";
+  const runnable =
+    canvas.kind === "html" || canvas.kind === "project" || workspace.builds.length > 0;
   useEffect(() => {
     if (runnable && !canvasPinnedShut) setCanvasOpen(true);
-  }, [runnable, canvasPinnedShut, canvas.artifacts.length]);
+  }, [runnable, canvasPinnedShut, canvas.artifacts.length, workspace.builds.length]);
 
   const toggleCanvas = useCallback(() => {
     setCanvasOpen((open) => {
@@ -162,7 +166,9 @@ export default function App() {
             onClick={toggleCanvas}
             title={canvasOpen ? "Hide canvas" : "Show canvas"}
           >
-            Canvas{canvas.artifacts.length ? ` ${canvas.artifacts.length}` : ""}
+            Canvas{workspace.files.length || canvas.artifacts.length
+              ? ` ${workspace.files.length || canvas.artifacts.length}`
+              : ""}
           </button>
           <button className="ghost-btn" onClick={toggleTheme}>
             {theme === "light" ? "Light" : "Dark"}
@@ -278,7 +284,16 @@ export default function App() {
           </div>
         </main>
 
-        {canvasOpen && <Canvas state={canvas} running={running} onClose={toggleCanvas} />}
+        {canvasOpen && (
+          <Canvas
+            state={canvas}
+            running={running}
+            onClose={toggleCanvas}
+            workspace={workspace}
+            activeBuild={activeBuild}
+            onSelectBuild={setActiveBuild}
+          />
+        )}
       </div>
     </div>
   );

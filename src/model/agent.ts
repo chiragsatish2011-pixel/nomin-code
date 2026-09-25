@@ -27,7 +27,7 @@ export type TurnFrame =
   | { kind: "error"; message: string }
   | { kind: "usage"; promptTokens: number; completionTokens: number }
   | { kind: "verdict"; verdict: Verdict }
-  | { kind: "files"; files: Array<{ path: string; bytes: number }> }
+  | { kind: "files"; files: Array<{ path: string; bytes: number; content?: string }> }
   | { kind: "end" };
 
 export interface TreeFrame {
@@ -73,7 +73,17 @@ export interface TurnOptions {
   sessionId?: string;
   /** The approved plan. Its presence is what unlocks the tools. */
   plan?: Plan | null;
+  /**
+   * The workspace as the client holds it. On a serverless host every request
+   * is a fresh instance with an empty disk, so the files have to travel with
+   * the turn — otherwise the agent starts from nothing each time and the
+   * canvas never sees what was built.
+   */
+  files?: Array<{ path: string; content: string }>;
 }
+
+/** Files larger than this come back as a listing only. */
+const MAX_RETURNED_BYTES = 400_000;
 
 /** How many tool rounds one turn may take before it must report back. */
 const MAX_TOOL_ROUNDS = 16;
@@ -100,6 +110,13 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
   const settings = resolveBudget(options.mode ?? "balanced", request, executing);
 
   const workspace = executing && options.sessionId ? await Workspace.open(options.sessionId) : null;
+
+  // Restore what the client is holding before the agent looks at anything.
+  if (workspace && options.files?.length) {
+    for (const file of options.files) {
+      await workspace.write(file.path, file.content).catch(() => undefined);
+    }
+  }
   const log: TreeFrame[] = [];
   const touched = new Map<string, number>();
   const state = {
@@ -338,12 +355,20 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
     yield tree({ type: "step.completed", id: "answer", label: "Response complete" });
   }
 
-  // Report the workspace back, so the canvas shows files rather than fences.
+  // Hand the workspace back with contents. The client is the durable copy —
+  // it survives the next request landing on a different instance, and a reload.
   if (workspace) {
-    const files = await workspace.list().catch(() => []);
-    if (files.length) {
-      yield { kind: "files", files: files.map((file) => ({ path: file.path, bytes: file.bytes })) };
+    const listing = await workspace.list().catch(() => []);
+    const files = [];
+    for (const file of listing) {
+      if (file.bytes > MAX_RETURNED_BYTES) {
+        files.push({ path: file.path, bytes: file.bytes });
+        continue;
+      }
+      const content = await workspace.read(file.path).catch(() => undefined);
+      files.push({ path: file.path, bytes: file.bytes, content });
     }
+    if (files.length) yield { kind: "files", files };
   }
 
   // --- the manager ------------------------------------------------------

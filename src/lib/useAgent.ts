@@ -3,6 +3,14 @@ import type { AgentEvent } from "@nomin/work-tree";
 import { parsePlan, type Plan, type PlanStatus } from "../model/plan.js";
 import type { PreparedAttachment } from "./media.js";
 import {
+  chooseBuild,
+  emptySnapshot,
+  fetchWorkspace,
+  filesForTurn,
+  mergeFiles,
+  type WorkspaceSnapshot,
+} from "./workspace.js";
+import {
   listSessions,
   loadLastSession,
   loadSession,
@@ -71,6 +79,12 @@ export function useAgent() {
   const [plan, setPlan] = useState<Plan | null>(null);
   const [planStatus, setPlanStatus] = useState<PlanStatus>("none");
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFileRef[]>([]);
+  const [workspace, setWorkspace] = useState<WorkspaceSnapshot>(emptySnapshot);
+  // send() is a callback; a ref keeps it reading the live snapshot rather than
+  // whatever was captured when it was created.
+  const workspaceRef = useRef<WorkspaceSnapshot>(emptySnapshot);
+  workspaceRef.current = workspace;
+  const [activeBuild, setActiveBuild] = useState<string | null>(null);
   const [restored, setRestored] = useState(false);
   const [visionStatus, setVisionStatus] = useState<string | null>(null);
   const abort = useRef<AbortController | null>(null);
@@ -88,6 +102,13 @@ export function useAgent() {
         setPlan(record.plan);
         setPlanStatus(record.planStatus);
         setEvents(record.messages[record.messages.length - 1]?.events ?? []);
+        const stored = record.workspace?.length
+          ? mergeFiles(emptySnapshot, record.workspace)
+          : await fetchWorkspace(record.id);
+        if (live) {
+          setWorkspace(stored);
+          setActiveBuild(stored.builds[0]?.entry ?? null);
+        }
       }
       setRestored(true);
     })();
@@ -109,12 +130,17 @@ export function useAgent() {
       planStatus,
       step: 0,
       mode: "balanced",
+      workspace: workspace.files.map((file) => ({
+        path: file.path,
+        bytes: file.bytes,
+        content: file.content,
+      })),
     };
     const timer = window.setTimeout(() => {
       void saveSession(record).then(() => listSessions().then(setSessions));
     }, 400);
     return () => window.clearTimeout(timer);
-  }, [messages, plan, planStatus, restored, running, sessionId]);
+  }, [messages, plan, planStatus, restored, running, sessionId, workspace]);
 
   // Only tick while a cooldown is actually running.
   useEffect(() => {
@@ -134,6 +160,8 @@ export function useAgent() {
     setPlan(null);
     setPlanStatus("none");
     setWorkspaceFiles([]);
+    setWorkspace(emptySnapshot);
+    setActiveBuild(null);
   }, []);
 
   /** Open a stored session and continue it where it stopped. */
@@ -141,6 +169,11 @@ export function useAgent() {
     abort.current?.abort();
     const record = await loadSession(id);
     if (!record) return;
+    const stored = record.workspace?.length
+      ? mergeFiles(emptySnapshot, record.workspace)
+      : await fetchWorkspace(id);
+    setWorkspace(stored);
+    setActiveBuild(stored.builds[0]?.entry ?? null);
     setSessionId(record.id);
     setMessages(record.messages);
     setPlan(record.plan);
@@ -196,6 +229,14 @@ export function useAgent() {
           signal: controller.signal,
           body: JSON.stringify({
             title: prompt.split("\n")[0]?.slice(0, 60) ?? "Task",
+            mode,
+            sessionId,
+            // The gate: a plan only travels once it has been approved, and the
+            // server only hands out tools when one arrives.
+            plan: planOverride ?? (planStatus === "approved" ? plan : null),
+            // The workspace travels with it — a serverless host keeps no disk
+            // of its own between requests.
+            files: filesForTurn(workspaceRef.current),
             messages: history.map(({ role, content }, index) =>
               // The description rides with the turn it belongs to.
               index === history.length - 1 && mediaContext
@@ -253,6 +294,17 @@ ${content}` }
       } finally {
         abort.current = null;
         setRunning(false);
+
+        // On a host that keeps a disk between requests this catches anything
+        // the stream missed. Where it does not, the client's own copy stands.
+        const fromDisk = await fetchWorkspace(sessionId);
+        if (fromDisk.files.length) {
+          setWorkspace((previous) => {
+            const next = mergeFiles(previous, fromDisk.files);
+            setActiveBuild((current) => chooseBuild(previous, next, current));
+            return next;
+          });
+        }
       }
 
       function apply(frame: Frame) {
@@ -284,7 +336,12 @@ ${content}` }
             completionTokens: frame.completionTokens ?? 0,
           });
         } else if (frame.kind === "files" && frame.files) {
-          setWorkspaceFiles(frame.files);
+          setWorkspaceFiles(frame.files.map(({ path, bytes }) => ({ path, bytes })));
+          setWorkspace((previous) => {
+            const next = mergeFiles(previous, frame.files!);
+            setActiveBuild((current) => chooseBuild(previous, next, current));
+            return next;
+          });
         } else if (frame.kind === "verdict" && frame.verdict) {
           const verdict = frame.verdict;
           setMessages((prev) => attachVerdict(prev, verdict));
@@ -341,6 +398,9 @@ ${content}` }
     approvePlan,
     requestPlanChanges,
     workspaceFiles,
+    workspace,
+    activeBuild,
+    setActiveBuild,
   };
 }
 

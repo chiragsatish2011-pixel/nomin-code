@@ -26,6 +26,12 @@ export interface SessionRecord {
   /** Which plan step execution had reached, for resuming mid-build. */
   step: number;
   mode: string;
+  /**
+   * The workspace. Stored with the session because a serverless host keeps no
+   * disk between requests — without this, reopening a session would show the
+   * conversation with none of the work it produced.
+   */
+  workspace?: Array<{ path: string; bytes: number; content?: string }>;
 }
 
 const DB_NAME = "nomin";
