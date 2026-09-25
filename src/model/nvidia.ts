@@ -13,11 +13,13 @@ import type { ChatRequest, Provider, StreamEvent, ToolCall } from "./types.js";
 export class NvidiaProvider implements Provider {
   readonly id = "nvidia";
 
-  constructor(
-    private readonly model: ModelDescriptor,
-    private readonly apiKey: string,
-  ) {
+  private readonly model: ModelDescriptor;
+  private readonly apiKey: string;
+
+  constructor(model: ModelDescriptor, apiKey: string) {
     if (!apiKey) throw new Error(`Missing ${model.apiKeyEnv} — set it in .env`);
+    this.model = model;
+    this.apiKey = apiKey;
   }
 
   async *stream(request: ChatRequest): AsyncGenerator<StreamEvent> {

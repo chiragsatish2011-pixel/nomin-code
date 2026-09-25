@@ -5,3 +5,4 @@ dist-demo/
 .env.local
 *.log
 .nomin/
+bin/nomin.mjs

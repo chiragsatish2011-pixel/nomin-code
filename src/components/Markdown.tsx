@@ -5,7 +5,20 @@ import { Fragment, useState, type ReactNode } from "react";
  * blocks, headings, lists, bold, inline code) and nothing that needs raw HTML.
  */
 export function Markdown({ text, plain = false }: { text: string; plain?: boolean }) {
+  // A bare tool call is machinery, not prose. Showing it as an answer is how
+  // {"tool":"read_file"} ends up on screen where a reply should be.
+  if (!plain && isBareToolCall(text)) {
+    return <p className="md-p md-machinery">Nomin tried to use a tool that was not available in that turn.</p>;
+  }
   return <>{renderBlocks(text, plain)}</>;
+}
+
+function isBareToolCall(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") || trimmed.length > 600) return false;
+  return /"(tool|tool_name|function|name)"\s*:\s*"(read_file|write_file|list_files|run_command)"/.test(
+    trimmed,
+  );
 }
 
 function renderBlocks(text: string, plain = false): ReactNode[] {

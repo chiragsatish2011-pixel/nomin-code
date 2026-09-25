@@ -77,6 +77,9 @@ function isDocument(file: Artifact): boolean {
   return head.includes("<!doctype html") || head.includes("<html");
 }
 
+/** Files still being written, which nothing should judge as delivered. */
+export const isDraft = (file: Artifact) => Boolean(file.partial);
+
 /** Pull every code block out of the assistant's answers, newest turn last. */
 export function collectArtifacts(messages: ChatMessage[]): Artifact[] {
   const artifacts: Artifact[] = [];

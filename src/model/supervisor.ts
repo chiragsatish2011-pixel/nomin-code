@@ -128,7 +128,11 @@ export function createSupervisor(env = process.env): Supervisor {
 }
 
 export class Supervisor {
-  constructor(private readonly config: SupervisorConfig) {}
+  private readonly config: SupervisorConfig;
+
+  constructor(config: SupervisorConfig) {
+    this.config = config;
+  }
 
   /** "model" once a separate key is configured; "evidence" otherwise. */
   get mode(): "evidence" | "model" {

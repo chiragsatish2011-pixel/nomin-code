@@ -23,6 +23,8 @@ import {
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  /** What was attached to this message, so the transcript still shows it. */
+  attachments?: Array<{ name: string; kind: string; note?: string }>;
   error?: boolean;
   at: number;
   /** The work-tree events belonging to this turn — kept per turn, not global. */
@@ -84,6 +86,8 @@ export function useAgent() {
   // whatever was captured when it was created.
   const workspaceRef = useRef<WorkspaceSnapshot>(emptySnapshot);
   workspaceRef.current = workspace;
+  const planRef = useRef<Plan | null>(null);
+  planRef.current = plan;
   const [activeBuild, setActiveBuild] = useState<string | null>(null);
   const [restored, setRestored] = useState(false);
   const [visionStatus, setVisionStatus] = useState<string | null>(null);
@@ -212,7 +216,19 @@ export function useAgent() {
       }
 
       const now = Date.now();
-      const history: ChatMessage[] = [...messages, { role: "user", content: prompt, at: now }];
+      const history: ChatMessage[] = [
+        ...messages,
+        {
+          role: "user",
+          content: prompt,
+          at: now,
+          attachments: attachments?.map((item) => ({
+            name: item.name,
+            kind: item.kind,
+            note: item.problem ?? describeAttachment(item),
+          })),
+        },
+      ];
       setMessages([...history, { role: "assistant", content: "", at: now, events: [] }]);
       setEvents([]);
       setUsage(null);
@@ -312,9 +328,12 @@ ${content}` }
           setMessages((prev) => {
             const next = appendText(prev, frame.text!);
             const last = next[next.length - 1];
-            if (last?.role === "assistant" && planStatus !== "approved") {
+            if (last?.role === "assistant") {
               const found = parsePlan(last.content).plan;
-              if (found) {
+              // A new plan supersedes the approved one — otherwise a second,
+              // different task in the same session would silently keep
+              // building against the plan agreed for the first.
+              if (found && planSignature(found) !== planSignature(planRef.current)) {
                 setPlan(found);
                 setPlanStatus("proposed");
               }
@@ -331,10 +350,11 @@ ${content}` }
           setEvents((prev) => [...prev, event]);
           setMessages((prev) => attachEvent(prev, event));
         } else if (frame.kind === "usage") {
-          setUsage({
-            promptTokens: frame.promptTokens ?? 0,
-            completionTokens: frame.completionTokens ?? 0,
-          });
+          // Rounds accumulate: a turn that called tools six times spent all six.
+          setUsage((previous) => ({
+            promptTokens: (previous?.promptTokens ?? 0) + (frame.promptTokens ?? 0),
+            completionTokens: (previous?.completionTokens ?? 0) + (frame.completionTokens ?? 0),
+          }));
         } else if (frame.kind === "files" && frame.files) {
           setWorkspaceFiles(frame.files.map(({ path, bytes }) => ({ path, bytes })));
           setWorkspace((previous) => {
@@ -402,6 +422,21 @@ ${content}` }
     activeBuild,
     setActiveBuild,
   };
+}
+
+/** One line saying what was actually taken from an attachment. */
+function describeAttachment(item: PreparedAttachment): string | undefined {
+  if (item.kind === "video") return `${item.frames.length} frames read`;
+  if (item.kind === "image") return "read by vision";
+  if (item.kind === "document") return item.sections ? `${item.sections} sections read` : "text read";
+  if (item.kind === "text") return "text read";
+  return undefined;
+}
+
+/** Two plans are the same plan when they aim at the same work. */
+function planSignature(plan: Plan | null): string {
+  if (!plan) return "";
+  return `${plan.objective}|${plan.steps.map((step) => step.title).join(">")}`;
 }
 
 /** Events and verdicts belong to the turn that produced them. */

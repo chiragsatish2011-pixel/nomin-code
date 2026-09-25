@@ -1,3 +1,4 @@
+import { isOfficeDocument, readDocument } from "./documents.js";
 /**
  * Turning what the user drops in into something a text model can be told about.
  *
@@ -13,7 +14,7 @@
  * ffmpeg is available it takes over for formats the browser refuses.
  */
 
-export type AttachmentKind = "image" | "video" | "text" | "other";
+export type AttachmentKind = "image" | "video" | "audio" | "text" | "document" | "other";
 
 export interface Frame {
   /** Seconds into the video. 0 for a still image. */
@@ -32,6 +33,8 @@ export interface PreparedAttachment {
   text?: string;
   /** Video length in seconds, when known. */
   duration?: number;
+  /** Slides or sheets found in a document. */
+  sections?: number;
   /** Why nothing could be extracted, in plain words. */
   problem?: string;
 }
@@ -53,6 +56,10 @@ export function frameBudget(duration: number): number {
 export function classify(file: File): AttachmentKind {
   if (file.type.startsWith("image/")) return "image";
   if (file.type.startsWith("video/")) return "video";
+  if (file.type.startsWith("audio/") || /\.(mp3|wav|m4a|ogg|opus|aac|flac)$/i.test(file.name)) {
+    return "audio";
+  }
+  if (isOfficeDocument(file.name)) return "document";
   if (file.type.startsWith("text/") || /\.(txt|md|json|csv|ts|tsx|js|jsx|css|html|py|sh|yml|yaml)$/i.test(file.name)) {
     return "text";
   }
@@ -74,6 +81,27 @@ export async function prepare(file: File): Promise<PreparedAttachment> {
       }
       return { ...base, frames, duration };
     }
+    if (kind === "audio") {
+      // Nothing here can transcribe a recording: the browser's recogniser
+      // listens to a microphone, not to a file, and the model layer has no
+      // speech model. Say so, and carry what is actually known.
+      const duration = await audioDuration(file).catch(() => undefined);
+      return {
+        ...base,
+        duration,
+        problem:
+          "Audio is attached but not transcribed — use the microphone to dictate, or paste the words.",
+      };
+    }
+    if (kind === "document") {
+      // A .pptx or .docx is a zip of XML; the text comes out without a parser
+      // library and without the file leaving the machine.
+      const read = await readDocument(file);
+      if (!read?.text.trim()) {
+        return { ...base, problem: "That document could not be read." };
+      }
+      return { ...base, text: read.text, sections: read.sections.length };
+    }
     if (kind === "text") {
       const text = await file.slice(0, MAX_TEXT_BYTES).text();
       return { ...base, text };
@@ -82,6 +110,28 @@ export async function prepare(file: File): Promise<PreparedAttachment> {
   } catch (error) {
     return { ...base, problem: error instanceof Error ? error.message : "Could not read that file." };
   }
+}
+
+/** How long a recording runs, which is all that can be read from it here. */
+function audioDuration(file: File): Promise<number | undefined> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const audio = new Audio();
+    const finish = (value?: number) => {
+      URL.revokeObjectURL(url);
+      resolve(Number.isFinite(value) ? value : undefined);
+    };
+    const timer = setTimeout(() => finish(undefined), 4000);
+    audio.onloadedmetadata = () => {
+      clearTimeout(timer);
+      finish(audio.duration);
+    };
+    audio.onerror = () => {
+      clearTimeout(timer);
+      finish(undefined);
+    };
+    audio.src = url;
+  });
 }
 
 /** Shrink an image so a vision call stays small and fast. */

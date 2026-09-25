@@ -1,13 +1,31 @@
 import { useEffect, useRef, useState } from "react";
+import { listen, voiceSupport } from "../lib/voice.js";
 import type { PreparedAttachment } from "../lib/media.js";
 
 export type Mode = "quick" | "balanced" | "deep";
 
-export /** What an attachment is, said plainly. */
+export const MicIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="9" y="3" width="6" height="11" rx="3" />
+    <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+  </svg>
+);
+
+const WaveIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+    <path d="M4 12v1M8 8v8M12 5v14M16 8v8M20 12v1" />
+  </svg>
+);
+
+/** What an attachment is, said plainly. */
 function label(item: PreparedAttachment): string {
   if (item.problem) return "unread";
   if (item.kind === "video") return `${item.frames.length} frames`;
   if (item.kind === "image") return "image";
+  if (item.kind === "audio") return item.duration ? `${Math.round(item.duration)}s audio` : "audio";
+  if (item.kind === "document") {
+    return item.sections ? `${item.sections} slides` : "document";
+  }
   if (item.kind === "text") return "text";
   return "file";
 }
@@ -36,6 +54,8 @@ export function Composer({
   onAttach,
   onRemoveAttachment,
   attaching,
+  conversation,
+  onToggleConversation,
 }: {
   draft: string;
   setDraft: (value: string) => void;
@@ -50,10 +70,49 @@ export function Composer({
   onAttach: (files: FileList | null) => void;
   onRemoveAttachment: (name: string) => void;
   attaching: boolean;
+  /** Hands-free mode: it listens, sends, speaks, and listens again. */
+  conversation: boolean;
+  onToggleConversation: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [hearing, setHearing] = useState(false);
+  const [voiceNote, setVoiceNote] = useState<string | null>(null);
+  const micRef = useRef<{ stop: () => void; abort: () => void } | null>(null);
+  const support = useRef(voiceSupport()).current;
+
+  // Dictation fills the box; it never sends on its own, because a stray noise
+  // should not start a build.
+  const toggleMic = () => {
+    if (hearing) {
+      micRef.current?.stop();
+      micRef.current = null;
+      setHearing(false);
+      return;
+    }
+    const base = draft.trim();
+    const handle = listen({
+      onPartial: (text) => setDraft(base ? `${base} ${text}` : text),
+      onFinal: (text) => {
+        setDraft(base ? `${base} ${text}` : text);
+        setHearing(false);
+        micRef.current = null;
+      },
+      onError: (message) => {
+        setVoiceNote(message);
+        setHearing(false);
+        micRef.current = null;
+        window.setTimeout(() => setVoiceNote(null), 4000);
+      },
+    });
+    if (handle) {
+      micRef.current = handle;
+      setHearing(true);
+    }
+  };
+
+  useEffect(() => () => micRef.current?.abort(), []);
   const areaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -117,10 +176,34 @@ export function Composer({
           }}
         />
 
+        {voiceNote && <p className="voice-note">{voiceNote}</p>}
+
         <div className="composer-bar">
+          {support.listening && (
+            <button
+              className={`round-btn mic${hearing ? " hearing" : ""}`}
+              title={hearing ? "Stop listening" : "Dictate"}
+              type="button"
+              onClick={toggleMic}
+            >
+              <MicIcon />
+            </button>
+          )}
+
+          {support.listening && support.speaking && (
+            <button
+              className={`round-btn talk${conversation ? " on" : ""}`}
+              title={conversation ? "Leave conversation mode" : "Talk with Nomin"}
+              type="button"
+              onClick={onToggleConversation}
+            >
+              <WaveIcon />
+            </button>
+          )}
+
           <button
             className="round-btn"
-            title="Attach an image, a video or a file"
+            title="Attach an image, a video, audio or a file"
             type="button"
             onClick={() => fileRef.current?.click()}
           >

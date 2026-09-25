@@ -284,6 +284,79 @@ A build can take minutes. `vercel.json` asks for `maxDuration: 300` on
 will cut a long build off mid-stream. On Hobby, keep to Quick or Balanced mode,
 or run the dev server locally for real builds.
 
+## In a terminal
+
+The same agent, the same plan gate, the same work tree — without a browser.
+
+```bash
+npm run build:cli
+node bin/nomin.mjs "build a landing page for a coffee shop"
+node bin/nomin.mjs --deep --yes --out ./build "write a tip calculator page"
+node bin/nomin.mjs --status
+```
+
+Attached to a terminal it redraws the tree in place and asks before it builds.
+Piped, it prints plain lines and never blocks on a prompt nobody can answer —
+`--yes` approves the plan up front, `--json` emits one event per line for a
+script to read, and `--out` writes the finished workspace to a directory.
+
+## Voice
+
+Both halves run in the browser, so no audio is uploaded and no extra
+credential is needed.
+
+- **Dictate** — the microphone fills the composer; it never sends on its own,
+  because a stray noise should not start a build.
+- **Conversation mode** — Nomin reads each answer aloud and opens the
+  microphone again, so a build can be steered while watching the preview. It
+  never listens while it is talking.
+- **Read aloud** — any answer, with code fences and markdown stripped out.
+
+Recognition is a Chromium and Safari feature; where it is missing the controls
+are hidden rather than offered and broken. An attached recording is *not*
+transcribed — there is no speech model behind it — and Nomin says so instead of
+pretending.
+
+## What you can attach
+
+| Kind | What Nomin does |
+|---|---|
+| Image | Read by the vision model, described to Trion |
+| Video | Broken into frames, read two at a time, synthesised |
+| `.pptx` `.docx` `.xlsx` | Unzipped in the browser, text extracted per slide, paragraph or sheet |
+| Text and code | Read directly |
+| Audio | Duration only, with an honest note that it is not transcribed |
+
+Everything attached stays visible in the transcript, with a line saying what
+was actually read from it.
+
+## Repair
+
+The manager's verdict is not a report that sits there. A verdict of *failed* or
+*concerns* sends the agent straight back to work with the findings as its
+brief — the runtime errors verbatim, the missing requirements named — and the
+preview is re-checked afterwards.
+
+It is bounded: two consecutive repairs, after which Nomin stops and says what
+is still wrong rather than looping. The budget resets when a verdict comes back
+healthy, or when you ask for something new.
+
+## Keyboard
+
+`Ctrl/Cmd+K` opens the command palette: new session, switch session, jump
+between builds, toggle the canvas, download the workspace, start a
+conversation, fix the runtime errors. Every action in the workspace is
+reachable by typing what it is called.
+
+## Taking the work with you
+
+**Download the workspace** writes every file as a `.zip`, built without a
+dependency — store-only, so it opens anywhere.
+
+Nomin also installs as an app: the manifest and service worker cache the shell,
+so it opens instantly and still opens offline. Nothing under `/api` is ever
+cached — a stale agent turn would be worse than no turn.
+
 ## Rate limits
 
 429s and the upstream 500/502/503/504 (which appear under load) are treated

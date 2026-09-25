@@ -56,11 +56,15 @@ class Lane {
   private completed = 0;
   private throttled = 0;
 
-  constructor(
-    readonly id: string,
-    private readonly budget: LaneBudget,
-    private readonly onChange: () => void,
-  ) {}
+  readonly id: string;
+  private readonly budget: LaneBudget;
+  private readonly onChange: () => void;
+
+  constructor(id: string, budget: LaneBudget, onChange: () => void) {
+    this.id = id;
+    this.budget = budget;
+    this.onChange = onChange;
+  }
 
   /** Minimum gap between two starts on this lane. */
   private get spacing(): number {
@@ -129,7 +133,11 @@ export class CrpmScheduler {
   private readonly lanes = new Map<string, Lane>();
   private readonly listeners = new Set<(lanes: LaneState[]) => void>();
 
-  constructor(private readonly budgets: Record<string, LaneBudget> = {}) {}
+  private readonly budgets: Record<string, LaneBudget>;
+
+  constructor(budgets: Record<string, LaneBudget> = {}) {
+    this.budgets = budgets;
+  }
 
   /** Book a call on a lane. Resolves when the lane has room for it. */
   run<T>(laneId: string, task: () => Promise<T>): Promise<T> {

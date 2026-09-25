@@ -40,7 +40,10 @@ export function Canvas({
   const [nonce, setNonce] = useState(0);
   const [selected, setSelected] = useState(0);
 
-  const project = useProject(state, nonce);
+  // A project is whatever is in the workspace; the chat is the fallback.
+  const projectFiles: Artifact[] = fromWorkspaceFiles(workspace, state);
+  const isProject = projectFiles.some((file) => file.name.endsWith("package.json"));
+  const project = useProject(projectFiles, isProject, nonce);
   const frame = VIEWPORTS[viewport];
 
   // The workspace is the truth when the agent used tools; the chat is only the
@@ -53,12 +56,14 @@ export function Canvas({
     ? workspace.files.map((file) => ({ name: file.path, code: file.content }))
     : state.artifacts.map((item: Artifact) => ({ name: item.name, code: item.code }));
   const artifact = codeFiles[Math.min(selected, codeFiles.length - 1)];
-  const previewable = fromWorkspace || state.kind === "html";
+  // A runnable project takes precedence: a page assembled from its files is
+  // not the same thing as the dev server that project is meant to run under.
+  const previewable = (fromWorkspace || state.kind === "html") && !isProject;
 
   // A fresh build should be visible without asking for it.
   useEffect(() => {
-    if (previewable || state.kind === "project") setTab("preview");
-  }, [previewable, state.kind, state.artifacts.length, activeBuild]);
+    if (previewable || isProject) setTab("preview");
+  }, [previewable, isProject, state.artifacts.length, activeBuild]);
 
   return (
     <section className="canvas">
@@ -118,7 +123,7 @@ export function Canvas({
                 style={frame.width ? { width: frame.width, height: frame.height ?? "100%" } : undefined}
               />
             </div>
-          ) : state.kind === "project" ? (
+          ) : isProject ? (
             <ProjectPreview project={project} viewport={viewport} nonce={nonce} />
           ) : (
             <CanvasEmpty
@@ -145,6 +150,19 @@ export function Canvas({
   );
 }
 
+/** The files the container should run: the workspace, else the chat. */
+function fromWorkspaceFiles(workspace: WorkspaceSnapshot, state: CanvasState): Artifact[] {
+  if (workspace.files.length) {
+    return workspace.files.map((file) => ({
+      name: file.path,
+      lang: file.path.split(".").pop() ?? "text",
+      code: file.content,
+      turn: 0,
+    }));
+  }
+  return state.artifacts;
+}
+
 /* ---------------- container ---------------- */
 
 function simpleHash(str: string): number {
@@ -160,17 +178,17 @@ function simpleHash(str: string): number {
  * once, tear down the previous dev server, install, start, wait for a real
  * server — lives in `lib/webcontainer.ts`; this hook only tracks its state.
  */
-function useProject(state: CanvasState, nonce: number): RunState {
+function useProject(files: Artifact[], isProject: boolean, nonce: number): RunState {
   const [run, setRun] = useState<RunState>({ status: "idle", log: [] });
 
   // Re-run only when the files actually change, not on every render.
   const signature = useMemo(
-    () => state.artifacts.map((file) => `${file.name}:${simpleHash(file.code)}`).join("|"),
-    [state.artifacts],
+    () => files.map((file) => `${file.name}:${simpleHash(file.code)}`).join("|"),
+    [files],
   );
 
   useEffect(() => {
-    if (state.kind !== "project") return;
+    if (!isProject) return;
 
     const support = checkSupport();
     if (!support.ok) {
@@ -194,12 +212,14 @@ function useProject(state: CanvasState, nonce: number): RunState {
       if (live) setRun((prev) => ({ ...prev, log: log.slice(-80) }));
     };
 
-    const handle = runProject(state.artifacts, update, push);
+    const handle = runProject(files, update, push);
     return () => {
       live = false;
       void handle.then((h) => h.dispose());
     };
-  }, [state.kind, signature, nonce]);
+    // `files` is covered by `signature`; including it would re-run on identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isProject, signature, nonce]);
 
   return run;
 }

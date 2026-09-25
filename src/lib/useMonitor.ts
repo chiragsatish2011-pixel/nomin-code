@@ -7,7 +7,13 @@ import type { ChatMessage, Verdict } from "./useAgent.js";
 
 export interface MonitorState {
   status: "idle" | "capturing" | "reviewing" | "done" | "failed";
+  /** Which turn this verdict belongs to, so a repair is only tried once. */
+  turn?: number;
   verdict?: Verdict;
+  /** What the page threw when it was actually executed. */
+  runtimeErrors?: string[];
+  /** The build that was reviewed, so a fix can name it. */
+  reviewed?: string;
   /** True when the monitor was given a rendering to look at. */
   sawRendering: boolean;
   error?: string;
@@ -46,10 +52,13 @@ export function useMonitor(
           name: file.path,
           lines: file.content.split("\n").length,
         }))
-      : canvas.artifacts.map((file) => ({
-          name: file.name,
-          lines: file.code.split("\n").length,
-        }));
+      : canvas.artifacts
+          // A fence that never closed is work in progress, not a deliverable.
+          .filter((file) => !file.partial)
+          .map((file) => ({
+            name: file.name,
+            lines: file.code.split("\n").length,
+          }));
 
     const producedWork =
       Boolean(workspace?.files.length) ||
@@ -96,11 +105,16 @@ export function useMonitor(
             digest: {
               request,
               answer: last.content,
-              events: (last.events ?? []).map((event) => ({
-                type: event.type,
-                label: event.label,
-                detail: event.detail,
-              })),
+              // Verification events are previous opinions, not evidence;
+              // including them lets a provisional verdict be quoted back as
+              // though it were a finding.
+              events: (last.events ?? [])
+                .filter((event) => !event.type.startsWith("verification."))
+                .map((event) => ({
+                  type: event.type,
+                  label: event.label,
+                  detail: event.detail,
+                })),
               durationMs: Date.now() - last.at,
               rateLimited: (last.events ?? []).some((event) => event.type === "cooldown.started"),
               empty: !last.content.trim(),
@@ -117,8 +131,11 @@ export function useMonitor(
         if (!live) return;
         setState({
           status: "done",
+          turn: lastIndex,
           verdict,
           sawRendering: Boolean(verdict.sawRendering),
+          runtimeErrors: runtime?.errors ?? [],
+          reviewed: build?.entry,
         });
       } catch (error) {
         if (!live) return;

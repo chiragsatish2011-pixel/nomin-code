@@ -28,6 +28,8 @@ export interface WorkspaceFile {
   path: string;
   bytes: number;
   modified: number;
+  /** True when this write created the file rather than replacing it. */
+  created?: boolean;
 }
 
 export interface CommandResult {
@@ -69,10 +71,13 @@ const REFUSED_ARGS = [/^--?f(orce)?$/i, /^publish$/i, /^deploy$/i, /^login$/i, /
 const SHELL_METACHARACTERS = /[&|;<>^`$()\n\r]/;
 
 export class Workspace {
-  private constructor(
-    readonly sessionId: string,
-    readonly root: string,
-  ) {}
+  readonly sessionId: string;
+  readonly root: string;
+
+  private constructor(sessionId: string, root: string) {
+    this.sessionId = sessionId;
+    this.root = root;
+  }
 
   static async open(sessionId: string, base = process.cwd()): Promise<Workspace> {
     const safeId = sessionId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64) || "default";
@@ -148,7 +153,7 @@ export class Workspace {
     const existed = await stat(full).then(() => true, () => false);
     await writeFile(full, content, "utf8");
     const info = await stat(full);
-    return { path: relative(this.root, full).split(sep).join("/"), bytes: info.size, modified: existed ? info.mtimeMs : 0 };
+    return { path: relative(this.root, full).split(sep).join("/"), bytes: info.size, modified: info.mtimeMs, created: !existed };
   }
 
   async exists(path: string): Promise<boolean> {

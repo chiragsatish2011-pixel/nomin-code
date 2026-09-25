@@ -252,6 +252,7 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
   // --- the loop ---------------------------------------------------------
   let round = 0;
   let buildOpen = false;
+  let exhausted = false;
 
   while (round < MAX_TOOL_ROUNDS) {
     round += 1;
@@ -299,11 +300,24 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
 
     state.answer = "";
     state.answering = false;
+    if (round >= MAX_TOOL_ROUNDS) exhausted = true;
+  }
+
+  if (exhausted) {
+    // Stopping at the ceiling is not the same as finishing, and saying so is
+    // what lets the user ask it to carry on.
+    yield tree({
+      type: "step.failed",
+      id: "rounds",
+      parent: "task",
+      label: `Stopped after ${MAX_TOOL_ROUNDS} tool rounds`,
+      detail: "ask it to continue",
+    });
   }
 
   if (buildOpen) {
     yield tree({
-      type: "step.completed",
+      type: exhausted ? "step.failed" : "step.completed",
       id: "build",
       label: touched.size ? `Wrote ${touched.size} file${touched.size === 1 ? "" : "s"}` : "Finished tool work",
     });
@@ -330,6 +344,36 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
       type: "step.completed",
       id: `continue-${continuations}`,
       label: `Part ${continuations + 1} written`,
+    });
+  }
+
+  // A tool call written as prose is not an answer. Say so and ask again.
+  if (!executing && state.answer && looksLikeToolCall(state.answer)) {
+    yield tree({
+      type: "step.started",
+      id: "no-tools",
+      parent: "task",
+      label: "Asked for a tool it does not have",
+    });
+    const attempted = state.answer;
+    state.answer = "";
+    state.answering = false;
+    yield* attempt(
+      [
+        ...history,
+        { role: "assistant", content: attempted },
+        {
+          role: "user",
+          content:
+            "You have no tools in this turn, so that call did nothing. Answer directly from what you already have. If you genuinely need to read or write files, say what you need and why, in plain words.",
+        },
+      ],
+      300,
+    );
+    yield tree({
+      type: state.answer ? "step.completed" : "step.failed",
+      id: "no-tools",
+      label: state.answer ? "Answered without tools" : "Still asking for tools",
     });
   }
 
@@ -386,10 +430,14 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
     type: "verification.started",
     id: "verify",
     parent: "task",
-    label: supervisor.shouldReview(digest) ? "Manager reviewing" : "Checking the record",
+    label: "Checking the record",
   });
 
-  const verdict = await supervisor.review(digest);
+  // Evidence only. The full review needs a rendering and a runtime probe,
+  // neither of which exists on the server — doing it here as well would pay
+  // for a second opinion formed with less information, and its verdict would
+  // then land in the event log that the real review reads as evidence.
+  const verdict = supervisor.inspect(digest);
   const passed = verdict.status === "verified" || verdict.status === "unverified";
   yield tree({
     type: passed ? "verification.passed" : "verification.failed",
@@ -420,6 +468,22 @@ function buildPrompt(messages: Message[], request: string, executing: boolean): 
   if (executing) return [...history, { role: "system", content: WORK_PROMPT }];
   if (needsWorkPrompt(request)) return [...history, { role: "system", content: PLAN_PROMPT }];
   return history;
+}
+
+/**
+ * Did the model answer with a tool call written out as text?
+ *
+ * It happens when a turn carries no tools: the model knows what it wants to do
+ * and says so in JSON. That is never a useful reply, so it is worth catching
+ * rather than rendering.
+ */
+export function looksLikeToolCall(answer: string): boolean {
+  const text = answer.trim();
+  if (!text.startsWith("{") && !text.startsWith("[")) return false;
+  if (text.length > 600) return false;
+  return /"(tool|tool_name|function|name)"\s*:\s*"(read_file|write_file|list_files|run_command)"/.test(
+    text,
+  );
 }
 
 /** A turn is unfinished if it was cut off, or stopped with a fence still open. */

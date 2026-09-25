@@ -763,3 +763,94 @@ button { font: inherit; color: inherit; cursor: pointer; border: none; backgroun
 .build-menu button.on { background: var(--purple-subtle); }
 .build-title { font-size: 13.5px; font-weight: 500; color: var(--ink); }
 .build-path { font-family: var(--mono); font-size: 11px; color: var(--muted-soft); }
+
+/* ---------- command palette ---------- */
+.palette-backdrop {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(8, 7, 13, 0.45);
+  backdrop-filter: blur(2px);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 14vh 16px 16px;
+}
+.palette {
+  width: min(560px, 100%);
+  border: 1px solid var(--hairline); border-radius: 16px;
+  background: var(--surface); box-shadow: var(--shadow-lift);
+  overflow: hidden; display: flex; flex-direction: column;
+}
+.palette-input {
+  width: 100%; padding: 16px 18px; border: none; outline: none;
+  background: transparent; color: var(--ink); font: inherit; font-size: 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+.palette-input::placeholder { color: var(--muted-soft); }
+.palette-list {
+  list-style: none; margin: 0; padding: 6px; max-height: 46vh; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.palette-list button {
+  width: 100%; display: flex; align-items: baseline; gap: 10px;
+  padding: 9px 12px; border-radius: 10px; text-align: left;
+}
+.palette-list button.on { background: var(--purple-subtle); }
+.palette-label { font-size: 14px; color: var(--ink); }
+.palette-hint {
+  font-size: 12px; color: var(--muted-soft);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.palette-group {
+  margin-left: auto; flex: none; font-family: var(--mono); font-size: 10.5px;
+  text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted-soft);
+}
+.palette-empty { margin: 0; padding: 20px 18px; font-size: 14px; color: var(--muted-soft); }
+.palette-foot {
+  display: flex; gap: 14px; padding: 9px 16px;
+  border-top: 1px solid var(--hairline); background: var(--panel);
+  font-family: var(--mono); font-size: 11px; color: var(--muted-soft);
+}
+.ghost-btn.palette-open { padding: 6px 10px; }
+.ghost-btn.palette-open kbd {
+  font-family: var(--mono); font-size: 11px; background: none; border: none; padding: 0;
+}
+
+/* ---------- the fix action on a report ---------- */
+.report-actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.fix-btn {
+  padding: 7px 14px; border-radius: 10px; font-size: 13px; font-weight: 600;
+  background: var(--purple); color: #fff;
+}
+.fix-btn:hover { background: var(--purple-deep); }
+.fix-btn:disabled { background: var(--surface-hi); color: var(--muted-soft); cursor: not-allowed; }
+.report-errors { font-family: var(--mono); font-size: 11.5px; color: var(--red); }
+
+/* ---------- voice ---------- */
+.round-btn.mic.hearing {
+  background: var(--purple-subtle); color: var(--purple);
+  box-shadow: 0 0 0 0 rgba(113, 50, 245, 0.45);
+  animation: hearing 1.6s ease-out infinite;
+}
+@keyframes hearing { to { box-shadow: 0 0 0 10px rgba(113, 50, 245, 0); } }
+.round-btn.talk.on {
+  background: var(--aurora); background-size: 200% 100%;
+  color: #fff; border-color: transparent;
+  animation: drift 5s linear infinite;
+}
+.voice-note {
+  margin: 0 0 8px; padding: 6px 10px; border-radius: 8px;
+  background: rgba(184, 121, 26, 0.12); color: var(--amber); font-size: 12.5px;
+}
+
+/* ---------- attachments in the transcript ---------- */
+.turn-attachments {
+  list-style: none; margin: 0 0 6px; padding: 0;
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.turn-attachments li {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 4px 10px; border-radius: 9999px;
+  border: 1px solid var(--hairline); background: var(--panel); font-size: 12px;
+}
+.turn-attachments em {
+  font-style: normal; font-size: 11px; color: var(--muted-soft); font-family: var(--mono);
+}
+.md-machinery { color: var(--muted); font-style: italic; }

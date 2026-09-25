@@ -1,0 +1,15 @@
+{
+  "name": "Nomin Code",
+  "short_name": "Nomin",
+  "description": "An autonomous engineering workspace.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#08070d",
+  "theme_color": "#7132f5",
+  "categories": ["developer", "productivity"],
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

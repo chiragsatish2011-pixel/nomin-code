@@ -6,11 +6,14 @@ import { Markdown } from "./components/Markdown.js";
 import { ParticleOrb } from "./components/ParticleOrb.js";
 import { ReportCard } from "./components/ReportCard.js";
 import { ThinkingBlock } from "./components/ThinkingBlock.js";
+import { CommandPalette, type Command } from "./components/CommandPalette.js";
 import { PlanCard } from "./components/PlanCard.js";
 import { QuestionCard } from "./components/QuestionCard.js";
 import { parsePlan } from "./model/plan.js";
 import { prepare, type PreparedAttachment } from "./lib/media.js";
 import { readCanvas } from "./lib/artifacts.js";
+import { listen, speak, stopSpeaking, voiceSupport } from "./lib/voice.js";
+import { createZip, download } from "./lib/zip.js";
 import { useMonitor, type MonitorState } from "./lib/useMonitor.js";
 import { formatAnswers, hasPartialBlock, parseQuestions } from "./lib/questions.js";
 import { readTheme, storeTheme, watchSystemTheme, type Theme } from "./lib/theme.js";
@@ -18,6 +21,9 @@ import { useAgent, type ChatMessage, type Verdict } from "./lib/useAgent.js";
 import type { Plan, PlanStatus } from "./model/plan.js";
 
 const MODEL_NAME = "Trion 1.5";
+
+/** Repairs attempted per turn before the agent stops and reports honestly. */
+const MAX_REPAIRS = 2;
 
 const STARTERS = [
   "Build a landing page for a coffee shop",
@@ -36,6 +42,13 @@ export default function App() {
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [attachments, setAttachments] = useState<PreparedAttachment[]>([]);
   const [attaching, setAttaching] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [conversation, setConversation] = useState(false);
+  const spokenFor = useRef<number>(-1);
+  const micRef = useRef<{ stop: () => void; abort: () => void } | null>(null);
+  // How many repairs this session has attempted, and for which turn. Bounded
+  // on purpose: an agent that cannot fix something must not retry for ever.
+  const repairs = useRef<{ turn: number; consecutive: number }>({ turn: -1, consecutive: 0 });
   const [canvasPinnedShut, setCanvasPinnedShut] = useState(false);
   const {
     messages,
@@ -66,6 +79,23 @@ export default function App() {
   // Follow the operating system until the user picks for themselves.
   useEffect(() => watchSystemTheme(setTheme), []);
 
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const typing =
+        event.target instanceof HTMLElement &&
+        (event.target.tagName === "INPUT" || event.target.tagName === "TEXTAREA");
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+      } else if (event.key === "Escape" && !typing) {
+        setPaletteOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const toggleTheme = useCallback(() => {
     setTheme((current) => {
       const next = current === "light" ? "dark" : "light";
@@ -94,6 +124,7 @@ export default function App() {
 
   const submit = useCallback(() => {
     const text = draft.trim();
+    repairs.current = { turn: -1, consecutive: 0 };
     if ((!text && !attachments.length) || running) return;
     setDraft("");
     const pending = attachments;
@@ -129,15 +160,114 @@ export default function App() {
     [mode, requestPlanChanges, send],
   );
 
+  /** Hand a failure straight back to the agent, with the plan still in force. */
+  const requestFix = useCallback(
+    (brief: string) => {
+      if (running) return;
+      void send(brief, mode, planStatus === "approved" ? plan : null);
+    },
+    [mode, plan, planStatus, running, send],
+  );
+
+  /** Take the work out of the browser as an archive that opens anywhere. */
+  const downloadWorkspace = useCallback(() => {
+    const files = workspace.files.length
+      ? workspace.files.map((file) => ({ path: file.path, content: file.content }))
+      : readCanvas(messages).artifacts.map((file) => ({ path: file.name, content: file.code }));
+    if (!files.length) return;
+    const name = (messages[0]?.content ?? "nomin")
+      .slice(0, 40)
+      .replace(/[^a-z0-9]+/gi, "-")
+      .replace(/^-|-$/g, "")
+      .toLowerCase();
+    download(createZip(files), `${name || "nomin"}.zip`);
+  }, [messages, workspace.files]);
+
   const canvas = useMemo(() => readCanvas(messages), [messages]);
   const monitor = useMonitor(messages, canvas, running, workspace, activeBuild);
-  const started = messages.length > 0;
-
-  const runnable =
-    canvas.kind === "html" || canvas.kind === "project" || workspace.builds.length > 0;
+  /**
+   * Close the loop: a verdict of failed or concerns sends the agent back to
+   * work with the manager's findings as the brief. Without this the manager
+   * writes an accurate report that nothing acts on.
+   */
   useEffect(() => {
-    if (runnable && !canvasPinnedShut) setCanvasOpen(true);
-  }, [runnable, canvasPinnedShut, canvas.artifacts.length, workspace.builds.length]);
+    if (running || monitor.status !== "done" || !monitor.verdict) return;
+    const verdict = monitor.verdict;
+    if (verdict.status !== "failed" && verdict.status !== "concerns") {
+      // Back to healthy: the next problem gets a full repair budget again.
+      repairs.current = { turn: monitor.turn ?? -1, consecutive: 0 };
+      return;
+    }
+    if (planStatus !== "approved") return; // without tools it cannot repair anything
+
+    const turn = monitor.turn ?? messages.length - 1;
+    if (repairs.current.turn === turn) return; // already handled this verdict
+
+    // Count consecutive repairs, not repairs per turn: each repair creates a
+    // new turn, so a per-turn cap would reset itself and never stop.
+    if (repairs.current.consecutive >= MAX_REPAIRS) return;
+    repairs.current = { turn, consecutive: repairs.current.consecutive + 1 };
+
+    const brief = [
+      "The review found this work incomplete. Fix it now — edit the files that exist, do not start over.",
+      verdict.summary,
+      monitor.runtimeErrors?.length
+        ? `It throws at runtime:\n${monitor.runtimeErrors.map((error) => `- ${error}`).join("\n")}`
+        : "",
+      verdict.issues.length ? `Findings:\n${verdict.issues.map((issue) => `- ${issue}`).join("\n")}` : "",
+      "Finish the deliverable, then say what you changed and what you checked.",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+    requestFix(brief);
+  }, [messages.length, monitor, planStatus, requestFix, running]);
+
+  /**
+   * Conversation mode.
+   *
+   * When a turn finishes, the answer is read aloud and the microphone opens
+   * again — so a build can be steered while looking at the preview rather than
+   * the keyboard. It stops the moment the mode is switched off, and it never
+   * listens while it is talking, which would otherwise hear itself.
+   */
+  useEffect(() => {
+    if (!conversation) {
+      stopSpeaking();
+      micRef.current?.abort();
+      micRef.current = null;
+      return;
+    }
+    if (running) return;
+
+    const index = messages.length - 1;
+    const last = messages[index];
+    if (!last || last.role !== "assistant" || !last.content || spokenFor.current === index) return;
+    spokenFor.current = index;
+
+    speak(last.content, () => {
+      if (!conversation) return;
+      micRef.current = listen({
+        onPartial: setDraft,
+        onFinal: (text) => {
+          micRef.current = null;
+          setDraft("");
+          if (text.trim()) void send(text.trim(), mode);
+        },
+        onError: () => {
+          micRef.current = null;
+          setConversation(false);
+        },
+      });
+    });
+  }, [conversation, messages, mode, running, send]);
+
+  useEffect(() => () => {
+    stopSpeaking();
+    micRef.current?.abort();
+  }, []);
+
+  const started = messages.length > 0;
 
   const toggleCanvas = useCallback(() => {
     setCanvasOpen((open) => {
@@ -145,6 +275,140 @@ export default function App() {
       return !open;
     });
   }, []);
+
+  const commands = useMemo<Command[]>(() => {
+    const list: Command[] = [
+      {
+        id: "new",
+        label: "New session",
+        hint: "Start again with an empty workspace",
+        group: "Session",
+        keywords: "reset clear start",
+        run: reset,
+      },
+      {
+        id: "canvas",
+        label: canvasOpen ? "Hide the canvas" : "Show the canvas",
+        hint: "Preview and code",
+        group: "View",
+        keywords: "preview toggle panel",
+        run: toggleCanvas,
+      },
+      {
+        id: "theme",
+        label: theme === "light" ? "Switch to dark" : "Switch to light",
+        group: "View",
+        keywords: "appearance colour color",
+        run: toggleTheme,
+      },
+    ];
+
+    if (voiceSupport().speaking) {
+      list.push({
+        id: "speak",
+        label: conversation ? "Leave conversation mode" : "Talk with Nomin",
+        hint: "Speak, and hear the reply",
+        group: "Voice",
+        keywords: "voice speech microphone talk dictate",
+        run: () => setConversation((on) => !on),
+      });
+      const lastAnswer = [...messages].reverse().find((item) => item.role === "assistant");
+      if (lastAnswer?.content) {
+        list.push({
+          id: "read",
+          label: "Read the last answer aloud",
+          group: "Voice",
+          keywords: "speak tts listen",
+          run: () => speak(lastAnswer.content),
+        });
+      }
+    }
+
+    if (workspace.files.length || canvas.artifacts.length) {
+      list.push({
+        id: "download",
+        label: "Download the workspace",
+        hint: `${workspace.files.length || canvas.artifacts.length} files as a .zip`,
+        group: "Workspace",
+        keywords: "export save zip archive",
+        run: downloadWorkspace,
+      });
+    }
+
+    if (monitor.runtimeErrors?.length) {
+      list.push({
+        id: "fix",
+        label: "Fix the runtime errors",
+        hint: `${monitor.runtimeErrors.length} found when the page ran`,
+        group: "Repair",
+        keywords: "repair broken error",
+        run: () => requestFix(monitor.runtimeErrors!.join("\n")),
+      });
+    }
+
+    if (running) {
+      list.push({
+        id: "stop",
+        label: "Stop the agent",
+        group: "Session",
+        keywords: "cancel halt abort",
+        run: stop,
+      });
+    }
+
+    for (const item of workspace.builds) {
+      list.push({
+        id: `build-${item.entry}`,
+        label: `Open ${item.title}`,
+        hint: item.entry,
+        group: "Builds",
+        keywords: "switch build preview",
+        run: () => {
+          setActiveBuild(item.entry);
+          setCanvasOpen(true);
+        },
+      });
+    }
+
+    for (const item of sessions.slice(0, 8)) {
+      list.push({
+        id: `session-${item.id}`,
+        label: item.title,
+        hint: "Open this session",
+        group: "Sessions",
+        keywords: "history switch open",
+        run: () => void openSession(item.id),
+      });
+    }
+
+    return list;
+  }, [
+    canvas.artifacts.length,
+    canvasOpen,
+    conversation,
+    messages,
+    downloadWorkspace,
+    monitor.runtimeErrors,
+    openSession,
+    requestFix,
+    reset,
+    running,
+    sessions,
+    setActiveBuild,
+    stop,
+    theme,
+    toggleCanvas,
+    toggleTheme,
+    workspace.builds,
+    workspace.files.length,
+  ]);
+
+  const runnable =
+    canvas.kind === "html" || canvas.kind === "project" || workspace.builds.length > 0;
+  useEffect(() => {
+    if (runnable && !canvasPinnedShut) setCanvasOpen(true);
+  }, [runnable, canvasPinnedShut, canvas.artifacts.length, workspace.builds.length]);
+
 
   return (
     <div className={`workspace${canvasOpen ? " with-canvas" : ""}`}>
@@ -173,8 +437,17 @@ export default function App() {
           <button className="ghost-btn" onClick={toggleTheme}>
             {theme === "light" ? "Light" : "Dark"}
           </button>
+          <button
+            className="ghost-btn palette-open"
+            onClick={() => setPaletteOpen(true)}
+            title="Command palette"
+          >
+            <kbd>⌘K</kbd>
+          </button>
         </div>
       </header>
+
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={commands} />
 
       <div className="frame">
         <nav className="rail">
@@ -256,6 +529,7 @@ export default function App() {
               planStatus={planStatus}
               onApprovePlan={approveAndBuild}
               onChangePlan={sendPlanChanges}
+              onFix={requestFix}
             />
           ) : (
             <Welcome running={running} pick={setDraft} />
@@ -276,6 +550,8 @@ export default function App() {
               onAttach={attach}
               onRemoveAttachment={removeAttachment}
               attaching={attaching}
+              conversation={conversation}
+              onToggleConversation={() => setConversation((on) => !on)}
             />
             <p className="disclaimer">
               Trion 1.5 can make mistakes. Nomin verifies work against real evidence — check anything
@@ -334,6 +610,7 @@ function Chat({
   planStatus,
   onApprovePlan,
   onChangePlan,
+  onFix,
 }: {
   messages: ChatMessage[];
   running: boolean;
@@ -347,6 +624,7 @@ function Chat({
   planStatus: PlanStatus;
   onApprovePlan: () => void;
   onChangePlan: (note: string) => void;
+  onFix: (brief: string) => void;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -416,7 +694,7 @@ function Chat({
               )}
 
               {!running && i === messages.length - 1 && !message.error && (
-                <ReportCard monitor={monitor} />
+                <ReportCard monitor={monitor} onFix={onFix} fixing={running} />
               )}
             </article>
           ),
@@ -438,6 +716,17 @@ function UserTurn({ message }: { message: ChatMessage }) {
 
   return (
     <article className="turn user">
+      {message.attachments?.length ? (
+        <ul className="turn-attachments">
+          {message.attachments.map((item) => (
+            <li key={item.name}>
+              <span className="attachment-kind">{item.kind}</span>
+              <span className="attachment-name">{item.name}</span>
+              {item.note && <em>{item.note}</em>}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <div className="user-box">{text}</div>
       {long && (
         <button className="show-more" onClick={() => setExpanded(!expanded)}>
