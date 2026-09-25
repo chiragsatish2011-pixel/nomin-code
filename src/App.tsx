@@ -130,7 +130,7 @@ export default function App() {
   );
 
   const canvas = useMemo(() => readCanvas(messages), [messages]);
-  const monitor = useMonitor(messages, canvas, running);
+  const monitor = useMonitor(messages, canvas, running, workspace, activeBuild);
   const started = messages.length > 0;
 
   const runnable =
