@@ -29,6 +29,39 @@ function agentApi(env: Record<string, string>): Plugin {
     configureServer(server: ViteDevServer) {
       // The monitor runs on its own key, off the hot path: the client calls it
       // after the answer has already landed, with a rendering when it has one.
+      // Vision fallback: frames in, words out. Runs on its own credential and
+      // its own CRPM lane, so reading a long video never starves the worker.
+      server.middlewares.use("/api/vision", async (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== "POST") {
+          res.statusCode = 405;
+          res.end("Method not allowed");
+          return;
+        }
+        const mod = (await server.ssrLoadModule(agentEntry)) as typeof import("./src/model/index.js");
+        const body = await readJson(req);
+        res.setHeader("Content-Type", "application/json");
+        try {
+          const results = [];
+          for (const item of body.media ?? []) {
+            results.push(
+              await mod.describeMedia({
+                name: String(item.name ?? "attachment"),
+                kind: item.kind === "video" ? "video" : "image",
+                frames: Array.isArray(item.frames) ? item.frames : [],
+                duration: typeof item.duration === "number" ? item.duration : undefined,
+                question: typeof body.question === "string" ? body.question : undefined,
+              }),
+            );
+          }
+          res.end(JSON.stringify({ results, context: mod.visionContext(results) }));
+        } catch (error) {
+          res.statusCode = 500;
+          res.end(
+            JSON.stringify({ error: error instanceof Error ? error.message : "Vision failed" }),
+          );
+        }
+      });
+
       // Evidence baseline: capture / diff, used by the manager before it wakes
       // the doctors. Kept on the server because it touches the filesystem.
       // Evidence baseline: capture / diff, used by the manager before it wakes

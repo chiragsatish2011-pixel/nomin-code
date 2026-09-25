@@ -9,6 +9,7 @@ import { ThinkingBlock } from "./components/ThinkingBlock.js";
 import { PlanCard } from "./components/PlanCard.js";
 import { QuestionCard } from "./components/QuestionCard.js";
 import { parsePlan } from "./model/plan.js";
+import { prepare, type PreparedAttachment } from "./lib/media.js";
 import { readCanvas } from "./lib/artifacts.js";
 import { useMonitor, type MonitorState } from "./lib/useMonitor.js";
 import { formatAnswers, hasPartialBlock, parseQuestions } from "./lib/questions.js";
@@ -33,6 +34,8 @@ export default function App() {
   // The canvas stays out of the way until it has something to show: the user
   // opens it, or the agent produces something runnable and it opens itself.
   const [canvasOpen, setCanvasOpen] = useState(false);
+  const [attachments, setAttachments] = useState<PreparedAttachment[]>([]);
+  const [attaching, setAttaching] = useState(false);
   const [canvasPinnedShut, setCanvasPinnedShut] = useState(false);
   const {
     messages,
@@ -68,12 +71,32 @@ export default function App() {
     });
   }, []);
 
+  const attach = useCallback(async (files: FileList | null) => {
+    if (!files?.length) return;
+    setAttaching(true);
+    try {
+      const prepared = await Promise.all(Array.from(files).map((file) => prepare(file)));
+      setAttachments((current) => {
+        const names = new Set(current.map((item) => item.name));
+        return [...current, ...prepared.filter((item) => !names.has(item.name))];
+      });
+    } finally {
+      setAttaching(false);
+    }
+  }, []);
+
+  const removeAttachment = useCallback((name: string) => {
+    setAttachments((current) => current.filter((item) => item.name !== name));
+  }, []);
+
   const submit = useCallback(() => {
     const text = draft.trim();
-    if (!text || running) return;
+    if ((!text && !attachments.length) || running) return;
     setDraft("");
-    void send(text, mode);
-  }, [draft, mode, running, send]);
+    const pending = attachments;
+    setAttachments([]);
+    void send(text, mode, undefined, pending);
+  }, [attachments, draft, mode, running, send]);
 
   const retry = useCallback(() => {
     const lastUser = [...messages].reverse().find((message) => message.role === "user");
@@ -243,6 +266,10 @@ export default function App() {
               mode={mode}
               setMode={setMode}
               placeholder={started ? "Reply, or ask for a change" : "Describe what you want built…"}
+              attachments={attachments}
+              onAttach={attach}
+              onRemoveAttachment={removeAttachment}
+              attaching={attaching}
             />
             <p className="disclaimer">
               Trion 1.5 can make mistakes. Nomin verifies work against real evidence — check anything

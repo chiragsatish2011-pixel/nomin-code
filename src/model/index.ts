@@ -8,6 +8,8 @@ export { CrpmScheduler, splitWork } from "./crpm.js";
 export { parsePlan, planBrief, planIncoming } from "./plan.js";
 export type { Plan, PlanStep, PlanStatus } from "./plan.js";
 export { TOOLS, runTool } from "./tools.js";
+export { describeMedia, visionAvailable, visionContext } from "./vision.js";
+export type { VisionFrame, VisionRequest, VisionResult } from "./vision.js";
 export { Workspace } from "./workspace.js";
 export type { WorkspaceFile, CommandResult } from "./workspace.js";
 export type { LaneBudget, LaneState } from "./crpm.js";

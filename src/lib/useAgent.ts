@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentEvent } from "@nomin/work-tree";
 import { parsePlan, type Plan, type PlanStatus } from "../model/plan.js";
+import type { PreparedAttachment } from "./media.js";
 import {
   listSessions,
   loadLastSession,
@@ -71,6 +72,7 @@ export function useAgent() {
   const [planStatus, setPlanStatus] = useState<PlanStatus>("none");
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFileRef[]>([]);
   const [restored, setRestored] = useState(false);
+  const [visionStatus, setVisionStatus] = useState<string | null>(null);
   const abort = useRef<AbortController | null>(null);
 
   // Restore the last session on open, so a reload resumes rather than resets.
@@ -161,9 +163,20 @@ export function useAgent() {
       // Passed explicitly on approval: reading it from state here would use
       // the value captured before the click, and the tools would never unlock.
       planOverride?: Plan | null,
+      attachments?: PreparedAttachment[],
     ) => {
       const prompt = text.trim();
       if (!prompt || abort.current) return;
+
+      // Anything visual is read first: Trion cannot see, so the frames become
+      // a description before the turn begins, and the description is what
+      // travels with the request.
+      let mediaContext = "";
+      if (attachments?.length) {
+        setVisionStatus("Reading the attachments");
+        mediaContext = await describeAttachments(attachments, prompt);
+        setVisionStatus(null);
+      }
 
       const now = Date.now();
       const history: ChatMessage[] = [...messages, { role: "user", content: prompt, at: now }];
@@ -183,7 +196,16 @@ export function useAgent() {
           signal: controller.signal,
           body: JSON.stringify({
             title: prompt.split("\n")[0]?.slice(0, 60) ?? "Task",
-            messages: history.map(({ role, content }) => ({ role, content })),
+            messages: history.map(({ role, content }, index) =>
+              // The description rides with the turn it belongs to.
+              index === history.length - 1 && mediaContext
+                ? { role, content: `${mediaContext}
+
+---
+
+${content}` }
+                : { role, content },
+            ),
           }),
         });
 
@@ -280,11 +302,12 @@ export function useAgent() {
 
   /** One plain line describing what the agent is doing — never its reasoning. */
   const status = useMemo(() => {
+    if (visionStatus) return visionStatus;
     if (waitUntil) return `Rate limited · resuming in ${secondsLeft}s`;
     if (!running) return messages.length ? "Ready" : "Idle";
     const last = [...events].reverse().find((event) => STATUS_TEXT[event.type]);
     return last ? STATUS_TEXT[last.type]! : "Working";
-  }, [events, messages.length, running, secondsLeft, waitUntil]);
+  }, [events, messages.length, running, secondsLeft, visionStatus, waitUntil]);
 
   const cooldown = waitUntil
     ? `Rate limit reached. Waiting ${secondsLeft}s for cooldown. Work state preserved — resuming the same step.`
@@ -326,6 +349,60 @@ function attachVerdict(messages: ChatMessage[], verdict: Verdict): ChatMessage[]
   if (last?.role !== "assistant") return messages;
   next[next.length - 1] = { ...last, verdict };
   return next;
+}
+
+/**
+ * Hand the frames to the vision model and get words back. A failure here is
+ * reported to the agent rather than hidden: it should know it was shown
+ * something it could not see.
+ */
+async function describeAttachments(
+  attachments: PreparedAttachment[],
+  question: string,
+): Promise<string> {
+  const media = attachments
+    .filter((item) => item.frames.length && (item.kind === "image" || item.kind === "video"))
+    .map((item) => ({
+      name: item.name,
+      kind: item.kind,
+      duration: item.duration,
+      frames: item.frames,
+    }));
+
+  const textFiles = attachments.filter((item) => item.text);
+  const unreadable = attachments.filter((item) => item.problem);
+
+  let context = "";
+  if (media.length) {
+    try {
+      const response = await fetch("/api/vision", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, media }),
+      });
+      const data = (await response.json()) as { context?: string; results?: Array<{ name: string; failed?: string }> };
+      context = data.context ?? "";
+      const failed = (data.results ?? []).filter((result) => result.failed);
+      if (failed.length) {
+        context += `
+
+Could not read: ${failed.map((item) => `${item.name} (${item.failed})`).join(", ")}`;
+      }
+    } catch {
+      context = `Attached media could not be read: ${media.map((item) => item.name).join(", ")}.`;
+    }
+  }
+
+  const parts = [context];
+  for (const file of textFiles) {
+    parts.push(`ATTACHED FILE: ${file.name}
+
+${file.text}`);
+  }
+  if (unreadable.length) {
+    parts.push(`Attached but not read: ${unreadable.map((item) => item.name).join(", ")}.`);
+  }
+  return parts.filter(Boolean).join("\n\n");
 }
 
 function appendText(messages: ChatMessage[], text: string): ChatMessage[] {

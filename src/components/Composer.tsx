@@ -1,8 +1,18 @@
 import { useEffect, useRef, useState } from "react";
+import type { PreparedAttachment } from "../lib/media.js";
 
 export type Mode = "quick" | "balanced" | "deep";
 
-export const MODES: Record<Mode, { label: string; hint: string; icon: string }> = {
+export /** What an attachment is, said plainly. */
+function label(item: PreparedAttachment): string {
+  if (item.problem) return "unread";
+  if (item.kind === "video") return `${item.frames.length} frames`;
+  if (item.kind === "image") return "image";
+  if (item.kind === "text") return "text";
+  return "file";
+}
+
+const MODES: Record<Mode, { label: string; hint: string; icon: string }> = {
   quick: { label: "Quick", hint: "Short answers, least latency", icon: "⚡" },
   balanced: { label: "Balanced", hint: "The default working mode", icon: "◑" },
   deep: { label: "DeepThink", hint: "Longer reasoning budget for hard work", icon: "✳" },
@@ -22,6 +32,10 @@ export function Composer({
   mode,
   setMode,
   placeholder,
+  attachments,
+  onAttach,
+  onRemoveAttachment,
+  attaching,
 }: {
   draft: string;
   setDraft: (value: string) => void;
@@ -32,9 +46,14 @@ export function Composer({
   mode: Mode;
   setMode: (mode: Mode) => void;
   placeholder: string;
+  attachments: PreparedAttachment[];
+  onAttach: (files: FileList | null) => void;
+  onRemoveAttachment: (name: string) => void;
+  attaching: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const areaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -58,6 +77,32 @@ export function Composer({
     <div className={`composer-shell${running ? " running" : ""}`}>
       <span className="composer-halo" aria-hidden="true" />
       <div className="composer">
+        {(attachments.length > 0 || attaching) && (
+          <ul className="attachments">
+            {attachments.map((item) => (
+              <li key={item.name} className={item.problem ? "attachment problem" : "attachment"}>
+                <span className="attachment-kind">{label(item)}</span>
+                <span className="attachment-name">{item.name}</span>
+                <button onClick={() => onRemoveAttachment(item.name)} title="Remove" type="button">
+                  ✕
+                </button>
+              </li>
+            ))}
+            {attaching && <li className="attachment reading">Reading…</li>}
+          </ul>
+        )}
+
+        <input
+          ref={fileRef}
+          type="file"
+          multiple
+          hidden
+          onChange={(event) => {
+            onAttach(event.target.files);
+            event.target.value = "";
+          }}
+        />
+
         <textarea
           ref={areaRef}
           value={draft}
@@ -73,7 +118,12 @@ export function Composer({
         />
 
         <div className="composer-bar">
-          <button className="round-btn" title="Attach context" type="button">
+          <button
+            className="round-btn"
+            title="Attach an image, a video or a file"
+            type="button"
+            onClick={() => fileRef.current?.click()}
+          >
             +
           </button>
 

@@ -195,6 +195,32 @@ approved plan and its status — and restored on open. The sidebar lists real
 sessions and switches between them. Files live on disk, so a reload resumes
 against the same workspace rather than starting again.
 
+## Images and video
+
+Trion reads text, not pixels. So anything visual goes through a second,
+multimodal model whose only job is to turn frames into words; the description
+reaches Trion, the image never does. Replies say so ("based on the description
+provided") rather than pretending the model looked.
+
+**Images** are downscaled to 1024px and read in one call.
+
+**Video** is broken into frames with `<video>` and a canvas — no ffmpeg, no
+native dependency, and the file never leaves the machine; only the sampled
+frames do. The clip is sampled by length (4 frames under 5s, up to 12 over two
+minutes), read **two frames per call** so the model sees motion, then the notes
+are drawn together into one account of what happens over time.
+
+Every vision call is booked through CRPM on its own lane and its own
+credential, so reading a long video never starves the worker or the manager.
+
+Two things worth knowing:
+
+- Recorded WebM files routinely carry a wrong or infinite duration. Nomin seeks
+  past the end to force the browser to resolve the real length — without that,
+  a three-second clip gets sampled as if it were one second.
+- Nothing is stored. Frames are built in memory and sent straight to the vision
+  model, so there is no upload directory to sweep and nothing to leak later.
+
 ## Rate limits
 
 429s and the upstream 500/502/503/504 (which appear under load) are treated
