@@ -4,7 +4,6 @@ import { Composer, type Mode } from "./components/Composer.js";
 import { describe as describeCheckpoint } from "./lib/checkpoints.js";
 import { Mark } from "./components/Mark.js";
 import { Markdown } from "./components/Markdown.js";
-import { ParticleOrb } from "./components/ParticleOrb.js";
 import { ReportCard } from "./components/ReportCard.js";
 import { ThinkingBlock } from "./components/ThinkingBlock.js";
 import { CommandPalette, type Command } from "./components/CommandPalette.js";
@@ -621,7 +620,9 @@ export default function App() {
 function Welcome({ running, pick }: { running: boolean; pick: (text: string) => void }) {
   return (
     <div className="welcome">
-      <ParticleOrb size={120} count={480} active />
+      <span className="welcome-mark">
+        <Mark size={84} aurora busy={running} />
+      </span>
       <h1>What are we building?</h1>
       <p>
         Describe the outcome. Nomin Code asks what it needs, plans it for your approval, then builds,

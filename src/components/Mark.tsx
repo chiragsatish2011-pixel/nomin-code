@@ -1,52 +1,64 @@
 /**
  * The Nomin mark.
  *
- * A single glyph built from the work tree itself: a head node with two
- * branches descending from it. It is the product's own diagram at 24px — quiet
- * at rest, and the branches light with the aurora while the agent is working.
+ * The N, cut into four pieces: a back-leaning left stem, the bold diagonal,
+ * and the right stem split by an angled cut. The slivers between them are the
+ * whole character of it, so they are held open rather than closed up at small
+ * sizes — the corners are rounded by stroking each piece in its own fill,
+ * which keeps the gaps honest at 24px and at 240.
+ *
+ * It draws in `currentColor` by default so a bar, a button or a footer can
+ * colour it by setting text colour, and takes the aurora when it is the
+ * subject rather than a label.
  */
-export function Mark({ size = 28, busy = false }: { size?: number; busy?: boolean }) {
-  const id = `mark-${size}${busy ? "-busy" : ""}`;
+
+/** The four pieces, in a 200×150 box. */
+const PIECES = [
+  "M42 54 L64 54 L44 142 L21 142 Z",
+  "M58 8 L96 8 L142 142 L103 142 Z",
+  "M150 8 L192 8 L187 30 L141 51 Z",
+  "M141 59 L132 100 L151 142 L170 142 L187 38 Z",
+];
+
+const RATIO = 200 / 150;
+
+export function Mark({
+  size = 28,
+  busy = false,
+  aurora = false,
+}: {
+  /** Height in pixels. The width follows the mark's own proportions. */
+  size?: number;
+  busy?: boolean;
+  /** Draw in the brand gradient rather than the surrounding text colour. */
+  aurora?: boolean;
+}) {
+  const id = `mark-${size}${aurora ? "-a" : ""}`;
+  const paint = aurora ? `url(#${id}-g)` : "currentColor";
+
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
-      <defs>
-        <linearGradient id={`${id}-a`} x1="4" y1="4" x2="28" y2="28" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#855bfb" />
-          <stop offset="0.6" stopColor="#7132f5" />
-          <stop offset="1" stopColor="#2ed3c6" />
-        </linearGradient>
-      </defs>
-
-      <rect x="0.5" y="0.5" width="31" height="31" rx="9" fill="var(--purple-subtle)" />
-
-      {/* spine */}
-      <path
-        d="M11 9v11a2 2 0 0 0 2 2h2"
-        stroke={`url(#${id}-a)`}
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        fill="none"
-      />
-      <path
-        d="M11 14h3"
-        stroke="var(--muted-soft)"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        fill="none"
-      />
-
-      {/* head and branch nodes */}
-      <circle cx="11" cy="8" r="3" fill={`url(#${id}-a)`}>
-        {busy && (
-          <animate attributeName="r" values="3;3.6;3" dur="1.8s" repeatCount="indefinite" />
-        )}
-      </circle>
-      <circle cx="16" cy="14" r="2" fill="var(--muted-soft)" />
-      <circle cx="17" cy="22" r="2" fill={`url(#${id}-a)`}>
-        {busy && (
-          <animate attributeName="opacity" values="1;0.35;1" dur="1.8s" repeatCount="indefinite" />
-        )}
-      </circle>
+    <svg
+      width={Math.round(size * RATIO)}
+      height={size}
+      viewBox="0 0 200 150"
+      fill="none"
+      aria-hidden="true"
+      className={busy ? "mark busy" : "mark"}
+    >
+      {aurora && (
+        <defs>
+          <linearGradient id={`${id}-g`} x1="20" y1="8" x2="192" y2="142" gradientUnits="userSpaceOnUse">
+            <stop stopColor="#a07dff" />
+            <stop offset="0.55" stopColor="#7132f5" />
+            <stop offset="1" stopColor="#2ed3c6" />
+          </linearGradient>
+        </defs>
+      )}
+      <g fill={paint} stroke={paint} strokeWidth="3" strokeLinejoin="round">
+        {PIECES.map((piece) => (
+          <path key={piece} d={piece} />
+        ))}
+      </g>
     </svg>
   );
 }

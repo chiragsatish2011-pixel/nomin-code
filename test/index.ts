@@ -195,18 +195,24 @@ test("a file wrapped in a code fence is unwrapped", async () => {
 
 suite("Configuration");
 
-test("a seat needs a key and a model, and says which is missing", () => {
-  is(modelConfigured(TRION_1_5, env({ NVIDIA_API_KEY: "k" })), false, "a key alone is not configured");
-  is(modelConfigured(TRION_1_5, env({ NOMIN_WORKER_MODEL: "m" })), false, "a model alone is not configured");
-  is(modelConfigured(TRION_1_5, env({ NVIDIA_API_KEY: "k", NOMIN_WORKER_MODEL: "m" })), true, "both halves");
+test("a credential is all a seat needs, because it carries its own model", () => {
+  // The deployment case: a host holding nothing but the key still runs, which
+  // is the whole reason the identifiers live in the descriptors.
+  is(modelConfigured(TRION_1_5, env({ NVIDIA_API_KEY: "k" })), true, "a key is enough");
+  is(modelConfigured(TRION_1_5, env({})), false, "and it is still required");
+  ok(getModel("Trion 1.5", env({})).backend, "the seat resolves without any variable set");
+});
 
-  let message = "";
-  try {
-    getModel("Trion 1.5", env({}));
-  } catch (error) {
-    message = (error as Error).message;
-  }
-  ok(message.includes("NOMIN_WORKER_MODEL"), "the error names the variable to set");
+test("a model variable overrides the seat it names", () => {
+  is(
+    getModel("Trion 1.5", env({ NOMIN_WORKER_MODEL: "vendor/other" })).backend,
+    "vendor/other",
+    "the variable wins where it is set",
+  );
+  ok(
+    getModel("Trion 1.5", env({})).backend !== "vendor/other",
+    "and the descriptor stands where it is not",
+  );
 });
 
 test("the endpoint has a working default and honours the older variable", () => {
@@ -220,18 +226,25 @@ test("identifiers are read when a seat is used, not when the module loads", () =
   is(getModel("Trion 1.5", env({ NOMIN_WORKER_MODEL: "vendor/b" })).backend, "vendor/b", "and the next one");
 });
 
-test("the monitor falls back to evidence rather than failing the turn", () => {
-  is(createSupervisor(env({})).mode, "evidence", "no credential");
-  is(createSupervisor(env({ NOMIN_SUPERVISOR_API_KEY: "k" })).mode, "evidence", "a credential with no model");
-  is(createSupervisor(env({ NOMIN_SUPERVISOR_API_KEY: "k", NOMIN_VISION_MODEL: "m" })).mode, "model", "either model variable configures it");
+test("the monitor runs on its credential alone, and falls back without one", () => {
+  is(createSupervisor(env({})).mode, "evidence", "no credential, no model pass");
+  is(createSupervisor(env({ NOMIN_SUPERVISOR_API_KEY: "k" })).mode, "model", "a credential is enough");
+  is(
+    createSupervisor(env({ NOMIN_SUPERVISOR_API_KEY: "k", NOMIN_VISION_MODEL: "m" })).mode,
+    "model",
+    "either model variable overrides it",
+  );
   ok(SUPERVISOR_MODEL_ENVS.includes(SUPERVISOR.backendEnv ?? ""), "its own variable is one of them");
 });
 
-test("a doctor is on duty only with both halves", () => {
+test("a doctor is on duty once it has a credential", () => {
   const keys = Object.fromEntries(DOCTORS.map((d) => [d.apiKeyEnv, "k"]));
-  const models = Object.fromEntries(DOCTORS.map((d) => [d.backendEnv, "m"]));
-  is(availableDoctors(env(keys)).length, 0, "keys alone put nobody on duty");
-  is(availableDoctors(env({ ...keys, ...models })).length, 6, "both halves put all six on duty");
+  is(availableDoctors(env({})).length, 0, "nobody is on duty without keys");
+  is(availableDoctors(env(keys)).length, 6, "six keys put all six on duty");
+  ok(
+    DOCTORS.every((doctor) => doctor.backend),
+    "every seat carries the model it runs on",
+  );
 });
 
 suite("The manager's own line");

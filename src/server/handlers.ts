@@ -242,21 +242,16 @@ export function handleHealth(_req: IncomingMessage, res: ServerResponse): void {
     ok: true,
     // Never the key itself, and never the backend's name — only whether the
     // deployment is configured at all.
-    // A seat needs a credential *and* a model identifier. Reporting only the
-    // key is how a deployment answers "ok" and then fails its first turn with
-    // a missing-backend error that nothing here predicted.
+    // Every seat carries a model, so a credential is what decides whether it
+    // can run. `modelConfigured` still checks both, because a deployment is
+    // free to blank a seat's model with an empty override.
     worker: modelConfigured(TRION_1_5),
     manager: modelConfigured(SUPERVISOR, process.env, SUPERVISOR_MODEL_ENVS),
-    vision:
-      Boolean(process.env.NOMIN_VISION_API_KEY || process.env.NOMIN_SUPERVISOR_API_KEY) &&
-      SUPERVISOR_MODEL_ENVS.some((name) => process.env[name]),
+    vision: Boolean(process.env.NOMIN_VISION_API_KEY || process.env.NOMIN_SUPERVISOR_API_KEY),
     doctors: availableDoctors().length,
-    // Which half is missing, named, so a broken deployment can be diagnosed
-    // from the health endpoint instead of from a red line in the transcript.
-    missing: [
-      !process.env.NVIDIA_API_KEY && "NVIDIA_API_KEY",
-      !process.env.NOMIN_WORKER_MODEL && "NOMIN_WORKER_MODEL",
-    ].filter(Boolean),
+    // Named, so a deployment that cannot run is diagnosed from here rather than
+    // from a red line in the transcript.
+    missing: [!process.env.NVIDIA_API_KEY && "NVIDIA_API_KEY"].filter(Boolean),
     environment: serverless ? "serverless" : "server",
     capabilities: {
       tools: true,

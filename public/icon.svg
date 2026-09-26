@@ -1,13 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <defs>
-    <linearGradient id="a" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+    <linearGradient id="a" x1="10" y1="16" x2="54" y2="48" gradientUnits="userSpaceOnUse">
       <stop stop-color="#a07dff"/><stop offset=".55" stop-color="#7132f5"/><stop offset="1" stop-color="#2ed3c6"/>
     </linearGradient>
   </defs>
   <rect width="64" height="64" rx="16" fill="#0c0b12"/>
-  <path d="M22 18v22a4 4 0 0 0 4 4h4" stroke="url(#a)" stroke-width="3" stroke-linecap="round" fill="none"/>
-  <path d="M22 28h6" stroke="#6a6c82" stroke-width="3" stroke-linecap="round" fill="none"/>
-  <circle cx="22" cy="16" r="6" fill="url(#a)"/>
-  <circle cx="32" cy="28" r="4" fill="#6a6c82"/>
-  <circle cx="34" cy="44" r="4.5" fill="url(#a)"/>
+  <g transform="translate(9 14.5) scale(0.23)" fill="url(#a)" stroke="url(#a)" stroke-width="9" stroke-linejoin="round">
+    <path d="M42 54 L64 54 L44 142 L21 142 Z"/>
+    <path d="M58 8 L96 8 L142 142 L103 142 Z"/>
+    <path d="M150 8 L192 8 L187 30 L141 51 Z"/>
+    <path d="M141 59 L132 100 L151 142 L170 142 L187 38 Z"/>
+  </g>
 </svg>

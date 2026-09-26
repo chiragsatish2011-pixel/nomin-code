@@ -6,13 +6,12 @@ live work tree are parts of the same thing, not separate products.
 **Trion 1.5** is the model. Nect 1.3 and Fret 5 are declared in the registry as
 future models and fail loudly if selected; nothing pretends they work.
 
-The backend behind Trion 1.5 is configuration, not product, and it lives in the
-environment alone. `src/model/registry.ts` names the *variable* each seat reads,
-never the identifier, so the registry can be read without learning what Trion
-1.5 is. A seat with no model configured is reported as unconfigured rather than
-quietly falling back to something written in the source. The identifier never
-reaches the UI, the work tree, an error message or a log line — provider
-failures are re-worded in Nomin's own voice before they leave the server.
+The backend behind Trion 1.5 is configuration, not product. Each seat in
+`src/model/registry.ts` carries the model it runs on and the variable that
+overrides it, so a deployment holding nothing but a credential works and moving
+a seat elsewhere needs no code change. The identifier never reaches the UI, the
+work tree, an error message or a log line — provider failures are re-worded in
+Nomin's own voice before they leave the server.
 
 ```bash
 npm install
@@ -26,13 +25,11 @@ off at the token ceiling, a reply that stops mid-sentence, a round that ends
 without saying why — is exercised without spending a call on it. Every case in
 the suite is a fault that reached a user once.
 
-The key and the model live in `.env` at the repo root (git-ignored). Both are
-needed — a key with no model behind it is not a configured seat, and the first
-turn fails on the missing model rather than on anything you did:
+The key lives in `.env` at the repo root (git-ignored). That is all a seat
+needs; the model variables are optional overrides:
 
 ```
 NVIDIA_API_KEY=nvapi-…
-NOMIN_WORKER_MODEL=…     # the provider's id for Trion 1.5
 NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
 ```
 
@@ -258,20 +255,18 @@ Development**:
 
 | Variable | Needed for |
 |---|---|
-| `NVIDIA_API_KEY` | Trion 1.5 — without it nothing runs |
-| `NOMIN_WORKER_MODEL` | Trion 1.5's backend id — **without it nothing runs** |
-| `NOMIN_BASE_URL` | the provider endpoint (`NVIDIA_BASE_URL` still works) |
+| `NVIDIA_API_KEY` | Trion 1.5 — **without it nothing runs** |
 | `NOMIN_SUPERVISOR_API_KEY` | the manager, and the vision fallback |
-| `NOMIN_SUPERVISOR_MODEL` | the manager's backend id (`NOMIN_VISION_MODEL` also works) |
 | `NOMIN_VISION_API_KEY` | optional: a separate key for vision |
-| `NOMIN_VISION_MODEL` | optional: a separate model for vision |
 | `NOMIN_DOCTOR_1..6_API_KEY` | the doctor team |
-| `NOMIN_DOCTOR_1..6_MODEL` | each doctor's backend id |
+| `NOMIN_BASE_URL` | optional: the provider endpoint (`NVIDIA_BASE_URL` still works) |
+| `NOMIN_WORKER_MODEL` | optional: override Trion 1.5's backend |
+| `NOMIN_SUPERVISOR_MODEL` | optional: override the manager's (`NOMIN_VISION_MODEL` also works) |
+| `NOMIN_DOCTOR_1..6_MODEL` | optional: override each doctor's |
 
-A seat needs **both** halves. A key with no model identifier behind it is not a
-configured seat, and the first turn fails on the missing model rather than on
-anything the user did — so `/api/health`, `nomin --status` and the error itself
-each name the variable to set.
+The keys are the requirement; every seat already carries a model. `/api/health`
+and `nomin --status` report which seats can actually run and name anything that
+is missing.
 
 Redeploy after adding them — Vercel only injects variables at build time.
 

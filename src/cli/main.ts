@@ -239,9 +239,12 @@ async function confirm(): Promise<boolean> {
 /** One seat's configuration, without naming what it runs on. */
 function describeSeat(model: ModelDescriptor, extra: string[] = [], env = process.env): string {
   if (modelConfigured(model, env, extra)) return "configured";
+  // The seat carries its own model, so the missing half is almost always the
+  // credential. Saying "no key, no model" when the model is right there sends
+  // someone hunting a variable that does not need setting.
   const key = Boolean(model.apiKeyEnv && env[model.apiKeyEnv]);
   const names = [model.backendEnv, ...extra].filter(Boolean) as string[];
-  const backend = names.some((name) => env[name]);
+  const backend = names.some((name) => env[name]) || Boolean(model.backend);
   if (!key && !backend) return "missing (no key, no model)";
   return key ? `missing ${names[0]}` : `missing ${model.apiKeyEnv}`;
 }

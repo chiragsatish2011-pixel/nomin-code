@@ -193,6 +193,20 @@ button { font: inherit; color: inherit; cursor: pointer; border: none; backgroun
   font-size: 40px; font-weight: 700; letter-spacing: -1px; line-height: 1.15;
 }
 .welcome p { margin: 0; max-width: 56ch; color: var(--muted); font-size: 16px; line-height: 1.5; }
+/* The mark as the subject of the empty state: a soft aurora bloom behind it,
+ * so it sits in the same light the orb used to cast rather than on bare
+ * background, and it breathes while a turn is running. */
+.welcome-mark {
+  display: flex; flex: none; align-items: center; justify-content: center;
+  padding: 18px 26px; border-radius: 28px;
+  background: radial-gradient(
+    60% 60% at 50% 50%,
+    color-mix(in oklab, var(--aurora-1, #7c5cff) 22%, transparent) 0%,
+    transparent 70%
+  );
+}
+.welcome-mark .mark.busy { animation: pulse 3s ease-in-out infinite; }
+
 .orb { display: block; flex: none; }
 .orb-halo { opacity: 0.5; }
 .orb.live .orb-halo { animation: pulse 3s ease-in-out infinite; }

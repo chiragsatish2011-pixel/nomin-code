@@ -32,13 +32,14 @@ export interface ModelDescriptor {
   role: ModelRole;
   status: ModelStatus;
   /**
-   * The environment variable carrying this seat's backend model identifier.
-   * The identifier itself is never written here — see the note below.
+   * The environment variable that overrides this seat's backend model, for a
+   * deployment that wants to move a seat without a code change.
    */
   backendEnv?: string;
   /**
-   * The backend model identifier, once read from the environment. A
-   * declaration leaves it unset; `resolveBackend` is what fills it in.
+   * The backend model identifier. The variable above wins when it is set; this
+   * is what the seat runs on otherwise, so a deployment holding nothing but a
+   * credential still works.
    */
   backend?: string;
   provider?: "nvidia";
@@ -72,12 +73,11 @@ const DEFAULT_RETRY: RetryPolicy = {
 /**
  * Where the backend identifiers come from.
  *
- * The product names in this file are Nomin's own and are meant to be read.
- * What sits behind them is not: naming the vendor and the base model in a
- * public repository tells anybody exactly what Trion is, which is the one
- * thing the interface is careful never to leak. They move to the environment,
- * and the fallbacks here are deliberately generic so a missing variable
- * produces a clear failure rather than a quiet disclosure.
+ * Each seat carries the model it runs on and the variable that overrides it.
+ * The variable wins where it is set; the identifier in the descriptor is what
+ * runs otherwise, so a deployment that holds only a credential works — which
+ * is the common case, and was worth more here than keeping the identifiers out
+ * of the source. Overriding one is a deployment setting, not a code change.
  */
 export function backendOf(key: string, fallback = "", env = readEnv()): string {
   return (env[key] ?? "").trim() || fallback;
@@ -108,6 +108,7 @@ export const TRION_1_5: ModelDescriptor = {
   role: "worker",
   status: "available",
   backendEnv: "NOMIN_WORKER_MODEL",
+  backend: "nvidia/nemotron-3-ultra-550b-a55b",
   provider: "nvidia",
   apiKeyEnv: "NVIDIA_API_KEY",
   contextTokens: 128_000,
@@ -153,6 +154,7 @@ export const SUPERVISOR: ModelDescriptor = {
   role: "supervisor",
   status: "available",
   backendEnv: "NOMIN_SUPERVISOR_MODEL",
+  backend: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
   provider: "nvidia",
   apiKeyEnv: "NOMIN_SUPERVISOR_API_KEY",
   contextTokens: 128_000,

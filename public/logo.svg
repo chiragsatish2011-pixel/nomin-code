@@ -1,0 +1,18 @@
+<!--
+  The Nomin mark on its own, for anywhere that wants the logo as a file:
+  a README, a social card, a slide. It draws in currentColor where that is
+  honoured and falls back to the brand gradient where it is not.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 150" width="200" height="150">
+  <defs>
+    <linearGradient id="a" x1="20" y1="8" x2="192" y2="142" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#a07dff"/><stop offset=".55" stop-color="#7132f5"/><stop offset="1" stop-color="#2ed3c6"/>
+    </linearGradient>
+  </defs>
+  <g fill="url(#a)" stroke="url(#a)" stroke-width="3" stroke-linejoin="round">
+    <path d="M42 54 L64 54 L44 142 L21 142 Z"/>
+    <path d="M58 8 L96 8 L142 142 L103 142 Z"/>
+    <path d="M150 8 L192 8 L187 30 L141 51 Z"/>
+    <path d="M141 59 L132 100 L151 142 L170 142 L187 38 Z"/>
+  </g>
+</svg>

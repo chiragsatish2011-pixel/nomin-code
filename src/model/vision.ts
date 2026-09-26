@@ -56,10 +56,13 @@ function visionModel(env: NodeJS.ProcessEnv): { model: ModelDescriptor; key: str
   // The monitor's multimodal model does this job too; it is already on its own
   // credential, which is exactly what CRPM wants.
   const key = env.NOMIN_VISION_API_KEY ?? env[SUPERVISOR.apiKeyEnv ?? ""] ?? "";
-  // Its own model variable when the deployment gives it one, the monitor's
-  // otherwise — the same seat serves both. No identifier is written here, so
-  // without either variable vision is simply unavailable and says so.
-  const backend = SUPERVISOR_MODEL_ENVS.map((name) => (env[name] ?? "").trim()).find(Boolean) ?? "";
+  // Its own model variable when the deployment sets one, the monitor's
+  // otherwise, and the monitor's own model when neither is set — the same seat
+  // serves both, so a credential is all vision actually needs.
+  const backend =
+    SUPERVISOR_MODEL_ENVS.map((name) => (env[name] ?? "").trim()).find(Boolean) ??
+    SUPERVISOR.backend ??
+    "";
   if (!key || !backend) return null;
   return {
     model: {
