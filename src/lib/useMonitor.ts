@@ -108,11 +108,16 @@ export function useMonitor(
             digest: {
               request,
               answer: last.content,
-              // Verification events are previous opinions, not evidence;
-              // including them lets a provisional verdict be quoted back as
-              // though it were a finding.
+              // Verification events are previous opinions — including them lets
+              // a provisional verdict be quoted back as though it were a
+              // finding — and round measurements are instrumentation for a
+              // person reading the tree. Neither is evidence about the work,
+              // and both crowd the manager's short event window.
               events: (last.events ?? [])
-                .filter((event) => !event.type.startsWith("verification."))
+                .filter(
+                  (event) =>
+                    !event.type.startsWith("verification.") && event.type !== "round.measured",
+                )
                 .map((event) => ({
                   type: event.type,
                   label: event.label,

@@ -6,25 +6,39 @@ live work tree are parts of the same thing, not separate products.
 **Trion 1.5** is the model. Nect 1.3 and Fret 5 are declared in the registry as
 future models and fail loudly if selected; nothing pretends they work.
 
-The backend behind Trion 1.5 is configuration, not product: it appears in
-`src/model/registry.ts` and `.env` only. It never reaches the UI, the work
-tree, an error message or a log line — provider failures are re-worded in
-Nomin's own voice before they leave the server.
+The backend behind Trion 1.5 is configuration, not product, and it lives in the
+environment alone. `src/model/registry.ts` names the *variable* each seat reads,
+never the identifier, so the registry can be read without learning what Trion
+1.5 is. A seat with no model configured is reported as unconfigured rather than
+quietly falling back to something written in the source. The identifier never
+reaches the UI, the work tree, an error message or a log line — provider
+failures are re-worded in Nomin's own voice before they leave the server.
 
 ```bash
 npm install
 npm run dev          # http://localhost:5180
+npm test             # regression tests, no credentials needed
 ```
 
-The key lives in `.env` at the repo root (git-ignored):
+The tests drive real turns against a scripted provider, so the behaviour that
+only shows up under a particular finish reason or a truncated reply — a file cut
+off at the token ceiling, a reply that stops mid-sentence, a round that ends
+without saying why — is exercised without spending a call on it. Every case in
+the suite is a fault that reached a user once.
+
+The key and the model live in `.env` at the repo root (git-ignored). Both are
+needed — a key with no model behind it is not a configured seat, and the first
+turn fails on the missing model rather than on anything you did:
 
 ```
 NVIDIA_API_KEY=nvapi-…
+NOMIN_WORKER_MODEL=…     # the provider's id for Trion 1.5
 NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
 ```
 
-It is read by the dev server only. It never enters the client bundle, the UI,
-the work tree or any log line.
+`.env.example` lists the rest: the manager, vision and the doctor team. They are
+read by the dev server only, and never enter the client bundle, the UI, the work
+tree or any log line.
 
 ## Layout
 

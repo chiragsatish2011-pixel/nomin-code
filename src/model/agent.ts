@@ -288,10 +288,16 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
     }
 
     // A call the model wrote out as text is still a call. Take it.
-    if (executing && state.answer.trim()) {
-      const harvest = harvestToolCalls(state.answer, TOOL_NAMES);
+    //
+    // Only what this pass added is harvested and emitted. The answer is usually
+    // empty when a pass starts, but a continuation deliberately builds on what
+    // came before, and emitting the whole of it again would print the earlier
+    // part into the transcript a second time.
+    if (executing && state.answer.slice(answerAtStart).trim()) {
+      const fresh = state.answer.slice(answerAtStart);
+      const harvest = harvestToolCalls(fresh, TOOL_NAMES);
       if (harvest.calls.length) {
-        state.answer = harvest.text;
+        state.answer = state.answer.slice(0, answerAtStart) + harvest.text;
         state.toolCalls.push(...harvest.calls);
         if (harvest.repaired) state.truncated = true;
         yield tree({
@@ -302,7 +308,8 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
           detail: harvest.repaired ? "the reply was cut short and was repaired" : undefined,
         });
       }
-      if (state.answer.trim()) yield { kind: "text", text: state.answer };
+      const text = state.answer.slice(answerAtStart);
+      if (text.trim()) yield { kind: "text", text };
     }
 
     if (state.thinking) {
@@ -364,17 +371,66 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
   let round = 0;
   let buildOpen = false;
   let exhausted = false;
+  /** Set when the turn stopped because it ran out of continuations, not rounds. */
+  let stalled = false;
   // Set at the end of a round that asked for a file to be finished, and read by
   // the round that answers. It is what lets a destructive write be recognised
   // as the continuation it was meant to be.
   let continuing: Continuation | null = null;
+  // Everything the turn has said, across rounds. `state.answer` holds one
+  // round at a time, and a fence opened in one round and closed in the next
+  // looks unbalanced in either half on its own.
+  let said = "";
+  let continuations = 0;
 
   while (round < MAX_TOOL_ROUNDS) {
     round += 1;
     // After an approved plan the first move is always an action, so the first
     // round insists on one rather than inviting another round of commentary.
     yield* attempt(history, round, round === 1);
-    if (state.failed || !state.toolCalls.length || !workspace) break;
+    said += state.answer;
+    // A turn with no workspace has no tools, so it never belonged in this loop;
+    // it is continued after it, where the answer is the whole deliverable.
+    if (state.failed || !workspace) break;
+
+    if (!state.toolCalls.length) {
+      // No tools called and nothing cut off: the turn has finished talking.
+      if (!needsMore({ answer: said, finish: state.finish })) break;
+      if (continuations >= MAX_CONTINUATIONS) {
+        stalled = true;
+        break;
+      }
+      // Cut off mid-answer while building. This used to end the turn where the
+      // tokens ran out — a reply stopping mid-sentence, or a fence left open so
+      // the canvas read the rest of the answer as code. The work itself is on
+      // disk; it is the account of it that was truncated, and asking for the
+      // remainder costs one round.
+      continuations += 1;
+      yield tree({
+        type: "step.started",
+        id: `continue-${continuations}`,
+        parent: "task",
+        label: "Continuing",
+        detail: `part ${continuations + 1}`,
+      });
+      history = [
+        ...history,
+        // A round that produced no text of its own adds no assistant turn:
+        // an empty one tells the model nothing and invites it to answer the
+        // silence rather than continue the sentence.
+        ...(state.answer.trim() ? [{ role: "assistant" as const, content: state.answer }] : []),
+        { role: "user", content: CONTINUE_NUDGE },
+      ];
+      yield tree({
+        type: "step.completed",
+        id: `continue-${continuations}`,
+        label: `Part ${continuations + 1} written`,
+      });
+      // Reset so the next pass is measured, harvested and emitted on its own.
+      state.answer = "";
+      state.answering = false;
+      continue;
+    }
 
     if (!buildOpen) {
       yield tree({ type: "step.started", id: "build", parent: "task", label: "Building" });
@@ -474,32 +530,33 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
     if (round >= MAX_TOOL_ROUNDS) exhausted = true;
   }
 
-  if (exhausted) {
-    // Stopping at the ceiling is not the same as finishing, and saying so is
-    // what lets the user ask it to carry on.
+  if (exhausted || stalled) {
+    // Stopping at a ceiling is not the same as finishing, and saying which
+    // ceiling is what lets the user ask for the right thing next.
     yield tree({
       type: "step.failed",
       id: "rounds",
       parent: "task",
-      label: `Stopped after ${MAX_TOOL_ROUNDS} tool rounds`,
+      label: stalled
+        ? `Still unfinished after ${MAX_CONTINUATIONS} continuations`
+        : `Stopped after ${MAX_TOOL_ROUNDS} tool rounds`,
       detail: "ask it to continue",
     });
   }
 
   if (buildOpen) {
     yield tree({
-      type: exhausted ? "step.failed" : "step.completed",
+      type: exhausted || stalled ? "step.failed" : "step.completed",
       id: "build",
       label: touched.size ? `Wrote ${touched.size} file${touched.size === 1 ? "" : "s"}` : "Finished tool work",
     });
   }
 
-  // While executing, the answer is not continued here: a pass re-emits the whole
-  // accumulated answer, so continuing it would print the text twice. What must
-  // not happen is saying nothing — a turn that stopped at the token ceiling is
-  // not a turn that finished, and the manager can only act on what it is told.
-  // This is a real failure in the record, so the review sends the work back.
-  if (executing && needsMore(state)) {
+  // Still cut off after the continuation budget is spent. The work may well be
+  // on disk, but the account of it is not finished, and the manager can only act
+  // on what it is told — so this is a real failure in the record and the review
+  // sends it back rather than passing a turn that stops mid-sentence.
+  if (executing && needsMore({ answer: said, finish: state.finish })) {
     yield tree({
       type: "step.failed",
       id: "cut-off",
@@ -510,8 +567,8 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
   }
 
   // A reasoning model sometimes spends the whole turn in its private channel,
-  // or is cut off mid-file. Neither is a finished turn.
-  let continuations = 0;
+  // or is cut off mid-file. Neither is a finished turn. Execution turns are
+  // continued inside the loop above, where the tools are.
   while (!executing && needsMore(state) && continuations < MAX_CONTINUATIONS) {
     continuations += 1;
     yield tree({
@@ -612,7 +669,13 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
   const digest: TurnDigest = {
     request,
     answer: state.answer,
-    events: log.map(({ type, label, detail }) => ({ type, label, detail })),
+    // The per-round measurements are instrumentation for a person reading the
+    // work tree, not evidence about the deliverable. The manager only ever sees
+    // the last two dozen events, so leaving them in spent that window on token
+    // counts and pushed the real record of the work out of view.
+    events: log
+      .filter((event) => event.type !== "round.measured")
+      .map(({ type, label, detail }) => ({ type, label, detail })),
     durationMs: Date.now() - startedAt,
     rateLimited: state.rateLimited,
     empty: !state.answer && !touched.size,
@@ -728,7 +791,7 @@ interface Continuation {
   path: string;
   /** The last of what is on disk, so the model can continue seamlessly. */
   tail: string;
-  /** The first of it, for telling a rewrite apart from a continuation. */
+  /** Its opening line, for telling a rewrite apart from a continuation. */
   head: string;
   bytes: number;
 }
@@ -757,15 +820,29 @@ async function lastWritten(
     return {
       path,
       tail: content.slice(-400),
-      head: content.trimStart().slice(0, HEAD_MATCH_CHARS),
+      head: openingLine(content),
       bytes: content.length,
     };
   }
   return null;
 }
 
-/** How much of a file's opening has to match for a write to be a rewrite. */
-const HEAD_MATCH_CHARS = 24;
+/**
+ * A file's first line with anything in it.
+ *
+ * The comparison is by line rather than by a fixed number of characters. A
+ * fixed prefix runs past the opening into the body — twenty-four characters of
+ * an HTML page is the doctype and the start of whatever follows it — so a
+ * rewrite that legitimately changed its second line failed to match its own
+ * opening and was mistaken for a continuation.
+ */
+function openingLine(content: string): string {
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed) return trimmed;
+  }
+  return "";
+}
 
 /**
  * Stop a continuation from destroying the file it was asked to finish.
@@ -797,7 +874,7 @@ function guardContinuation(
   // Nothing to rescue, and an empty write is the tool's own error to report.
   if (!content) return { call };
   // Starts the file again, or is at least as long as what is there: a rewrite.
-  if (asked.head && content.trimStart().startsWith(asked.head)) return { call };
+  if (asked.head && openingLine(content) === asked.head) return { call };
   if (content.length >= asked.bytes) return { call };
 
   return {
