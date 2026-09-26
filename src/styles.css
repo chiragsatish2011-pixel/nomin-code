@@ -932,3 +932,14 @@ button { font: inherit; color: inherit; cursor: pointer; border: none; backgroun
   margin-top: 1px;
   color: color-mix(in oklab, var(--aurora-2, #38e8c8) 80%, var(--fg, #fff));
 }
+
+/* The manager confirming work it sent back has now passed. */
+.turn.internal.verified .internal-note {
+  border-color: color-mix(in oklab, var(--ok, #3ddc97) 30%, transparent);
+  background: color-mix(in oklab, var(--ok, #3ddc97) 9%, transparent);
+  color: color-mix(in oklab, var(--ok, #3ddc97) 45%, var(--fg, #fff));
+}
+
+.turn.internal.verified .internal-note svg {
+  color: color-mix(in oklab, var(--ok, #3ddc97) 85%, var(--fg, #fff));
+}

@@ -30,6 +30,11 @@ export interface ChatMessage {
    * shown as though the user typed it.
    */
   internal?: boolean;
+  /**
+   * The manager speaking for itself — confirming that work it sent back has
+   * now been checked. Not part of the conversation sent to the model.
+   */
+  manager?: boolean;
   /** What was attached to this message, so the transcript still shows it. */
   attachments?: Array<{ name: string; kind: string; note?: string }>;
   error?: boolean;
@@ -219,6 +224,19 @@ export function useAgent() {
     });
   }, []);
 
+  /**
+   * The manager's own line in the transcript. It is display only: it never
+   * joins the history, because the model does not need to be told what its
+   * reviewer said to the user about it.
+   */
+  const addManagerNote = useCallback((text: string) => {
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (last?.manager && last.content === text) return prev;
+      return [...prev, { role: "assistant", content: text, manager: true, at: Date.now() }];
+    });
+  }, []);
+
   const stop = useCallback(() => {
     abort.current?.abort();
     setRunning(false);
@@ -255,7 +273,10 @@ export function useAgent() {
 
       const now = Date.now();
       const history: ChatMessage[] = [
-        ...messages,
+        // The manager's notes to the user are display only. Feeding them back
+        // would have the model reading its own reviewer's verdict as though
+        // it were part of the conversation.
+        ...messages.filter((message) => !message.manager),
         {
           role: "user",
           content: prompt,
@@ -457,6 +478,7 @@ ${content}` }
     requestPlanChanges,
     workspaceFiles,
     workspace,
+    addManagerNote,
     checkpoints,
     restoreCheckpoint,
     activeBuild,

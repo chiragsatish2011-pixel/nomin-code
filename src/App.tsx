@@ -69,6 +69,7 @@ export default function App() {
     requestPlanChanges,
     workspaceFiles,
     workspace,
+    addManagerNote,
     checkpoints,
     restoreCheckpoint,
     activeBuild,
@@ -197,6 +198,12 @@ export default function App() {
     if (running || monitor.status !== "done" || !monitor.verdict) return;
     const verdict = monitor.verdict;
     if (verdict.status !== "failed" && verdict.status !== "concerns") {
+      // Work that was sent back and has now passed gets said out loud. This
+      // is the only point at which the user hears about the round trip, and
+      // they hear the outcome rather than the failure that started it.
+      if (repairs.current.consecutive > 0 && verdict.status === "verified") {
+        addManagerNote(`Checked and complete. ${verdict.summary}`);
+      }
       // Back to healthy: the next problem gets a full repair budget again.
       repairs.current = { turn: monitor.turn ?? -1, consecutive: 0 };
       return;
@@ -227,7 +234,7 @@ export default function App() {
     // see is the manager taking the work back, not an instruction they never
     // wrote — and the finished result once it has actually been checked.
     requestFix(brief, true);
-  }, [messages.length, monitor, planStatus, requestFix, running]);
+  }, [addManagerNote, messages.length, monitor, planStatus, requestFix, running]);
 
   /**
    * Conversation mode.
@@ -671,7 +678,14 @@ function Chat({
     <div className="chat">
       <div className="chat-inner">
         {messages.map((message, i) =>
-          message.role === "user" ? (
+          message.manager ? (
+            <article key={i} className="turn internal verified">
+              <p className="internal-note">
+                <ManagerMark />
+                <span>{message.content}</span>
+              </p>
+            </article>
+          ) : message.role === "user" ? (
             <UserTurn key={i} message={message} />
           ) : (
             <article key={i} className={`turn${message.error ? " failed" : ""}`}>
