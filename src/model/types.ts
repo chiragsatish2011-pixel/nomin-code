@@ -38,6 +38,14 @@ export interface ChatRequest {
   temperature?: number;
   maxTokens?: number;
   signal?: AbortSignal;
+  /**
+   * Ask the chat template to skip its private reasoning pass. A reasoning
+   * model given tools and a finished plan will otherwise spend the whole
+   * budget deliberating and never emit a call.
+   */
+  thinking?: boolean;
+  /** Insist on a tool call rather than leaving it to the model's judgement. */
+  requireTool?: boolean;
 }
 
 /**

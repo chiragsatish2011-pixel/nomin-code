@@ -1,3 +1,5 @@
+import { parseLooseJson } from "./tooltext.js";
+
 /**
  * The plan — and the gate in front of it.
  *
@@ -40,12 +42,11 @@ export function parsePlan(answer: string): { text: string; plan: Plan | null } {
   if (!match?.[1]) return { text: answer, plan: null };
 
   const text = answer.replace(BLOCK, "").trimEnd();
-  try {
-    const raw = JSON.parse(match[1]) as Record<string, unknown>;
-    return { text, plan: normalise(raw) };
-  } catch {
-    return { text, plan: null };
-  }
+  // Tolerant on purpose: a plan is lost otherwise for a single stray brace,
+  // and what the user then sees is raw JSON where the plan should have been.
+  const raw = parseLooseJson(match[1]);
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { text, plan: null };
+  return { text, plan: normalise(raw as Record<string, unknown>) };
 }
 
 function normalise(raw: Record<string, unknown>): Plan | null {

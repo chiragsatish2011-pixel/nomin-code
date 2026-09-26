@@ -89,7 +89,13 @@ export class NvidiaProvider implements Provider {
       temperature: request.temperature ?? 0.2,
       max_tokens: request.maxTokens ?? this.model.maxOutputTokens ?? 4096,
       stream: true,
-      ...(request.tools?.length ? { tools: request.tools, tool_choice: "auto" } : {}),
+      ...(request.tools?.length
+        ? { tools: request.tools, tool_choice: request.requireTool ? "required" : "auto" }
+        : {}),
+      // The template exposes its thinking pass as a flag. Turning it off is
+      // the difference between a turn that deliberates until the token ceiling
+      // and a turn that writes the file.
+      ...(request.thinking === false ? { chat_template_kwargs: { thinking: false } } : {}),
     };
 
     return fetch(`${this.model.endpoint}/chat/completions`, {

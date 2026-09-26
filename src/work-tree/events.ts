@@ -38,7 +38,10 @@ export type AgentEventType =
   | "verification.started"
   | "verification.passed"
   | "verification.failed"
-  | "artifact.created";
+  | "artifact.created"
+  | "doctor.started"
+  | "doctor.completed"
+  | "doctor.failed";
 
 export interface AgentEvent {
   type: AgentEventType;
@@ -52,6 +55,16 @@ export interface AgentEvent {
   detail?: string;
   /** Seconds remaining, for cooldown/rate-limit nodes. Drives the countdown. */
   waitSeconds?: number;
+  /**
+   * The evidence behind the node: what it thought, the file it wrote, the
+   * output a command printed. Hidden until the row is opened, because a tree
+   * that shows everything at once is not a tree, it is a log.
+   */
+  body?: string;
+  /** How the body should be shown when the row is opened. */
+  bodyKind?: "thinking" | "code" | "output" | "text";
+  /** The file or command the body belongs to, shown as the panel's subtitle. */
+  bodyTitle?: string;
   /** Emission time in ms. Defaults to Date.now(). */
   at?: number;
 }
@@ -78,7 +91,8 @@ export type NodeKind =
   | "test"
   | "cooldown"
   | "verify"
-  | "artifact";
+  | "artifact"
+  | "doctor";
 
 type Rule =
   | { op: "open"; kind: NodeKind; label: string }
@@ -136,4 +150,10 @@ export const EVENT_RULES: Record<AgentEventType, Rule> = {
   "verification.failed": { op: "close", state: "failed" },
 
   "artifact.created": { op: "leaf", kind: "artifact", label: "Artifact", state: "done" },
+
+  // A second opinion is being taken. What the specialist is, and what it was
+  // asked, is deliberately not said — the user is told that one is working.
+  "doctor.started": { op: "open", kind: "doctor", label: "A specialist is looking" },
+  "doctor.completed": { op: "close", state: "done" },
+  "doctor.failed": { op: "close", state: "failed" },
 };

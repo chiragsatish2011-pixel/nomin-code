@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas } from "./components/Canvas.js";
 import { Composer, type Mode } from "./components/Composer.js";
+import { describe as describeCheckpoint } from "./lib/checkpoints.js";
 import { Mark } from "./components/Mark.js";
 import { Markdown } from "./components/Markdown.js";
 import { ParticleOrb } from "./components/ParticleOrb.js";
@@ -68,6 +69,8 @@ export default function App() {
     requestPlanChanges,
     workspaceFiles,
     workspace,
+    checkpoints,
+    restoreCheckpoint,
     activeBuild,
     setActiveBuild,
   } = useAgent();
@@ -500,6 +503,28 @@ export default function App() {
               </dd>
             </dl>
           </div>
+
+          {checkpoints.length > 0 && (
+            <div className="rail-section">
+              <span className="rail-caption">Restore</span>
+              <ul className="checkpoint-list">
+                {checkpoints.map((point) => (
+                  <li key={point.id}>
+                    <button
+                      type="button"
+                      className="checkpoint"
+                      disabled={running}
+                      title="Put the workspace back to this point"
+                      onClick={() => restoreCheckpoint(point.id)}
+                    >
+                      <span className="checkpoint-label">{point.label}</span>
+                      <span className="checkpoint-meta">{describeCheckpoint(point)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           <div className="rail-foot">
             <span className="rail-caption">Running on</span>

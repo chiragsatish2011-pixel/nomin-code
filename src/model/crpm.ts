@@ -23,6 +23,19 @@
  * asking for one enormous completion that is more likely to be throttled.
  */
 
+/**
+ * What a call is for, which decides where it sits in the queue.
+ *
+ * A lane is a shared, finite resource: while a repair loop or a doctor is
+ * working through a backlog, a person typing a question would otherwise wait
+ * behind all of it. Priority fixes the ordering, not the budget — nothing
+ * here lets a call skip the spacing rule or a cooldown, so jumping the queue
+ * can never cause the rate limit it is trying to avoid.
+ */
+export type Priority = "user" | "agent" | "background";
+
+const RANK: Record<Priority, number> = { user: 0, agent: 1, background: 2 };
+
 export interface LaneBudget {
   /** Requests per minute this credential may make. */
   rpm: number;
@@ -44,6 +57,9 @@ interface Job<T> {
   run: () => Promise<T>;
   resolve: (value: T) => void;
   reject: (error: unknown) => void;
+  priority: Priority;
+  /** Arrival time, so equal priorities keep their order. */
+  at: number;
 }
 
 const DEFAULT_BUDGET: LaneBudget = { rpm: 40, concurrency: 2 };
@@ -82,9 +98,14 @@ class Lane {
     };
   }
 
-  submit<T>(run: () => Promise<T>): Promise<T> {
+  submit<T>(run: () => Promise<T>, priority: Priority = "agent"): Promise<T> {
     return new Promise<T>((resolve, reject) => {
-      this.queue.push({ run, resolve, reject });
+      const job = { run, resolve, reject, priority, at: Date.now() };
+      // Insert by rank, then by arrival: within one priority the queue stays
+      // first-come-first-served, so nothing starves behind its own peers.
+      const at = this.queue.findIndex((queued) => RANK[queued.priority] > RANK[priority]);
+      if (at === -1) this.queue.push(job);
+      else this.queue.splice(at, 0, job);
       this.onChange();
       this.pump();
     });
@@ -140,8 +161,8 @@ export class CrpmScheduler {
   }
 
   /** Book a call on a lane. Resolves when the lane has room for it. */
-  run<T>(laneId: string, task: () => Promise<T>): Promise<T> {
-    return this.lane(laneId).submit(task);
+  run<T>(laneId: string, task: () => Promise<T>, priority: Priority = "agent"): Promise<T> {
+    return this.lane(laneId).submit(task, priority);
   }
 
   /** Tell a lane it was rate limited, so the rest of the team keeps going. */

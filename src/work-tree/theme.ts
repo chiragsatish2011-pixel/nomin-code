@@ -122,6 +122,7 @@ const GLYPH: Record<NodeKind, string> = {
   cooldown: "⏳",
   verify: "✓",
   artifact: "◈",
+  doctor: "✚",
 };
 
 export const glyphFor = (kind: NodeKind) => GLYPH[kind] ?? "•";

@@ -1,3 +1,4 @@
+import type { Checkpoint } from "./checkpoints.js";
 import type { Plan, PlanStatus } from "../model/plan.js";
 import type { ChatMessage } from "./useAgent.js";
 
@@ -32,6 +33,8 @@ export interface SessionRecord {
    * conversation with none of the work it produced.
    */
   workspace?: Array<{ path: string; bytes: number; content?: string }>;
+  /** Recent states of the workspace, so a bad turn can be undone. */
+  checkpoints?: Checkpoint[];
 }
 
 const DB_NAME = "nomin";

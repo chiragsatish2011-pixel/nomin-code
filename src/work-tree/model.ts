@@ -7,6 +7,10 @@ export interface TreeNode {
   state: NodeState;
   label: string;
   detail?: string;
+  /** Evidence shown when the row is opened — thinking, code, or output. */
+  body?: string;
+  bodyKind?: "thinking" | "code" | "output" | "text";
+  bodyTitle?: string;
   /** Countdown target (epoch ms) for cooldown nodes. */
   waitUntil?: number;
   startedAt: number;
@@ -63,6 +67,13 @@ export function applyEvent(state: TreeState, event: AgentEvent): boolean {
     node.waitUntil = undefined;
     if (event.label) node.label = event.label;
     if (event.detail !== undefined) node.detail = event.detail;
+    // The evidence usually arrives with the closing event, because that is
+    // when the thinking is finished and the file is actually written.
+    if (event.body) {
+      node.body = event.body;
+      node.bodyKind = event.bodyKind ?? node.bodyKind;
+      node.bodyTitle = event.bodyTitle ?? node.bodyTitle;
+    }
     // Settle anything still open beneath it — a closed parent ends its children.
     const cut = state.openStack.indexOf(id);
     if (cut !== -1) {
@@ -90,6 +101,9 @@ export function applyEvent(state: TreeState, event: AgentEvent): boolean {
     state: rule.op === "open" ? "active" : rule.state,
     label: event.label ?? rule.label,
     detail: event.detail,
+    body: event.body,
+    bodyKind: event.bodyKind,
+    bodyTitle: event.bodyTitle,
     startedAt: at,
     children: [],
     fresh: true,

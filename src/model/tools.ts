@@ -1,3 +1,4 @@
+import { parseLooseJson } from "./tooltext.js";
 import type { Workspace } from "./workspace.js";
 import type { ToolDefinition } from "./types.js";
 
@@ -88,6 +89,10 @@ export interface ToolOutcome {
     label: string;
     detail?: string;
     failed?: boolean;
+    /** The evidence the user can open: the file, the output, what was read. */
+    body?: string;
+    bodyKind?: "thinking" | "code" | "output" | "text";
+    bodyTitle?: string;
   };
 }
 
@@ -99,7 +104,7 @@ export async function runTool(
 ): Promise<ToolOutcome> {
   let args: Record<string, unknown>;
   try {
-    args = rawArguments ? (JSON.parse(rawArguments) as Record<string, unknown>) : {};
+    args = rawArguments ? ((parseLooseJson(rawArguments) ?? {}) as Record<string, unknown>) : {};
   } catch {
     return fail(name, "Arguments were not valid JSON.");
   }
@@ -113,7 +118,14 @@ export async function runTool(
           : "The workspace is empty.";
         return {
           output: listing,
-          event: { type: "tool.completed", label: "Read the workspace", detail: `${files.length} files` },
+          event: {
+            type: "tool.completed",
+            label: "Read the workspace",
+            detail: `${files.length} files`,
+            body: listing,
+            bodyKind: "output",
+            bodyTitle: "Workspace listing",
+          },
         };
       }
 
@@ -126,6 +138,9 @@ export async function runTool(
             type: "tool.completed",
             label: `Read ${path}`,
             detail: `${content.split("\n").length} lines`,
+            body: content,
+            bodyKind: "code",
+            bodyTitle: path,
           },
         };
       }
@@ -141,6 +156,11 @@ export async function runTool(
             type: existed ? "file.modified" : "file.created",
             label: existed ? `Edited ${file.path}` : `Created ${file.path}`,
             detail: `${content.split("\n").length} lines`,
+            // The whole file, so "what did it write" is one click away rather
+            // than a guess from a line count.
+            body: content,
+            bodyKind: "code",
+            bodyTitle: file.path,
           },
         };
       }
@@ -158,6 +178,9 @@ export async function runTool(
             label: ok ? `Ran ${result.command}` : `${result.command} failed`,
             detail: result.timedOut ? "timed out" : `exit ${result.exitCode}`,
             failed: !ok,
+            body: `$ ${result.command}\n\n${body || "(no output)"}`,
+            bodyKind: "output",
+            bodyTitle: result.command,
           },
         };
       }
@@ -176,3 +199,6 @@ function fail(name: string, message: string): ToolOutcome {
     event: { type: "tool.failed", label: `${name} failed`, detail: message.slice(0, 80), failed: true },
   };
 }
+
+/** The names the turn offers, for recognising a call written as prose. */
+export const TOOL_NAMES: readonly string[] = TOOLS.map((tool) => tool.function.name);

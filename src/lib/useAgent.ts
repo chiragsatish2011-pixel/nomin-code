@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentEvent } from "@nomin/work-tree";
 import { parsePlan, type Plan, type PlanStatus } from "../model/plan.js";
 import type { PreparedAttachment } from "./media.js";
+import { capture, restore, type Checkpoint } from "./checkpoints.js";
 import {
   chooseBuild,
   emptySnapshot,
@@ -80,14 +81,22 @@ export function useAgent() {
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [planStatus, setPlanStatus] = useState<PlanStatus>("none");
-  const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFileRef[]>([]);
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot>(emptySnapshot);
+  // Derived, never stored. Holding the file list twice meant the two copies
+  // drifted: reopening a session restored the workspace but left the list
+  // empty, so a finished build reported no files and the canvas had nothing
+  // to boot.
+  const workspaceFiles = useMemo<WorkspaceFileRef[]>(
+    () => workspace.files.map((file) => ({ path: file.path, bytes: file.bytes })),
+    [workspace],
+  );
   // send() is a callback; a ref keeps it reading the live snapshot rather than
   // whatever was captured when it was created.
   const workspaceRef = useRef<WorkspaceSnapshot>(emptySnapshot);
   workspaceRef.current = workspace;
   const planRef = useRef<Plan | null>(null);
   planRef.current = plan;
+  const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [activeBuild, setActiveBuild] = useState<string | null>(null);
   const [restored, setRestored] = useState(false);
   const [visionStatus, setVisionStatus] = useState<string | null>(null);
@@ -134,6 +143,7 @@ export function useAgent() {
       planStatus,
       step: 0,
       mode: "balanced",
+      checkpoints,
       workspace: workspace.files.map((file) => ({
         path: file.path,
         bytes: file.bytes,
@@ -144,7 +154,7 @@ export function useAgent() {
       void saveSession(record).then(() => listSessions().then(setSessions));
     }, 400);
     return () => window.clearTimeout(timer);
-  }, [messages, plan, planStatus, restored, running, sessionId, workspace]);
+  }, [checkpoints, messages, plan, planStatus, restored, running, sessionId, workspace]);
 
   // Only tick while a cooldown is actually running.
   useEffect(() => {
@@ -163,8 +173,8 @@ export function useAgent() {
     setRunning(false);
     setPlan(null);
     setPlanStatus("none");
-    setWorkspaceFiles([]);
     setWorkspace(emptySnapshot);
+    setCheckpoints([]);
     setActiveBuild(null);
   }, []);
 
@@ -177,6 +187,7 @@ export function useAgent() {
       ? mergeFiles(emptySnapshot, record.workspace)
       : await fetchWorkspace(id);
     setWorkspace(stored);
+    setCheckpoints(record.checkpoints ?? []);
     setActiveBuild(stored.builds[0]?.entry ?? null);
     setSessionId(record.id);
     setMessages(record.messages);
@@ -186,6 +197,20 @@ export function useAgent() {
     setUsage(null);
     setWaitUntil(null);
     setRunning(false);
+  }, []);
+
+  /** Put the workspace back to a checkpoint. Local, instant, no calls. */
+  const restoreCheckpoint = useCallback((id: string) => {
+    setCheckpoints((existing) => {
+      const found = existing.find((item) => item.id === id);
+      if (!found) return existing;
+      const snapshot = restore(found);
+      setWorkspace(snapshot);
+      setActiveBuild(snapshot.builds[0]?.entry ?? null);
+      // Everything after the restored point is no longer reachable, and
+      // keeping it would offer a "future" the workspace no longer matches.
+      return existing.slice(existing.indexOf(found) + 1);
+    });
   }, []);
 
   const stop = useCallback(() => {
@@ -213,6 +238,12 @@ export function useAgent() {
         setVisionStatus("Reading the attachments");
         mediaContext = await describeAttachments(attachments, prompt);
         setVisionStatus(null);
+      }
+
+      // Taken before the turn, not after: the point is the state the user
+      // would want back if this build goes wrong.
+      if (planOverride) {
+        setCheckpoints((existing) => capture(existing, workspaceRef.current, prompt));
       }
 
       const now = Date.now();
@@ -356,7 +387,6 @@ ${content}` }
             completionTokens: (previous?.completionTokens ?? 0) + (frame.completionTokens ?? 0),
           }));
         } else if (frame.kind === "files" && frame.files) {
-          setWorkspaceFiles(frame.files.map(({ path, bytes }) => ({ path, bytes })));
           setWorkspace((previous) => {
             const next = mergeFiles(previous, frame.files!);
             setActiveBuild((current) => chooseBuild(previous, next, current));
@@ -419,6 +449,8 @@ ${content}` }
     requestPlanChanges,
     workspaceFiles,
     workspace,
+    checkpoints,
+    restoreCheckpoint,
     activeBuild,
     setActiveBuild,
   };

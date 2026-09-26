@@ -854,3 +854,53 @@ button { font: inherit; color: inherit; cursor: pointer; border: none; backgroun
   font-style: normal; font-size: 11px; color: var(--muted-soft); font-family: var(--mono);
 }
 .md-machinery { color: var(--muted); font-style: italic; }
+
+/* Checkpoints — one click back to the workspace as it was before a build. */
+.checkpoint-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.checkpoint {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.checkpoint:hover:not(:disabled) {
+  background: var(--surface-raised, rgba(255, 255, 255, 0.04));
+  border-color: var(--border-soft, rgba(255, 255, 255, 0.08));
+}
+
+.checkpoint:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.checkpoint-label {
+  overflow: hidden;
+  font-size: 12.5px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.checkpoint-meta {
+  color: var(--muted, rgba(255, 255, 255, 0.45));
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+}

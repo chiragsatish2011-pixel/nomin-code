@@ -1,3 +1,4 @@
+import { parseLooseJson } from "../model/tooltext.js";
 /**
  * Clarification questions.
  *
@@ -36,7 +37,10 @@ export function parseQuestions(answer: string): ParsedAnswer {
 
   let questions: Question[] = [];
   try {
-    const parsed = JSON.parse(match[1]) as { questions?: unknown };
+    // Tolerant, for the same reason the plan block is: losing a round of
+    // questions to a stray brace costs the user the whole turn.
+    const parsed = parseLooseJson(match[1]) as { questions?: unknown } | null;
+    if (!parsed) return { text: answer.replace(BLOCK, "").trimEnd(), questions: [] };
     const list = Array.isArray(parsed.questions) ? parsed.questions : [];
     questions = list
       .map((raw, index) => normalise(raw, index))

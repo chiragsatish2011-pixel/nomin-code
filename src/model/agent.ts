@@ -3,7 +3,8 @@ import { getModel } from "./registry.js";
 import { NvidiaProvider } from "./nvidia.js";
 import { planBrief, type Plan } from "./plan.js";
 import { createSupervisor, type TurnDigest, type Verdict } from "./supervisor.js";
-import { TOOLS, runTool } from "./tools.js";
+import { TOOLS, TOOL_NAMES, runTool } from "./tools.js";
+import { harvestToolCalls, parseLooseJson } from "./tooltext.js";
 import { Workspace } from "./workspace.js";
 import type { Message, Provider, ToolCall } from "./types.js";
 
@@ -37,6 +38,10 @@ export interface TreeFrame {
   label?: string;
   detail?: string;
   waitSeconds?: number;
+  /** Evidence for the row — shown only when the user opens it. */
+  body?: string;
+  bodyKind?: "thinking" | "code" | "output" | "text";
+  bodyTitle?: string;
 }
 
 /**
@@ -86,6 +91,8 @@ export interface TurnOptions {
 const MAX_RETURNED_BYTES = 400_000;
 
 /** How many tool rounds one turn may take before it must report back. */
+const MAX_REASONING_CHARS = 20_000;
+
 const MAX_TOOL_ROUNDS = 16;
 /** How many times a truncated turn may be continued before giving up. */
 const MAX_CONTINUATIONS = 6;
@@ -140,9 +147,17 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
   yield tree({ type: "task.started", id: "task", label: options.title ?? "Task" });
 
   /** One pass at the model. Yields frames; records what happened in `state`. */
-  async function* attempt(messages: Message[], pass: number): AsyncGenerator<TurnFrame> {
+  async function* attempt(
+    messages: Message[],
+    pass: number,
+    requireTool = false,
+  ): AsyncGenerator<TurnFrame> {
     state.thinking = true;
     state.toolCalls = [];
+    // Kept so the finished thinking row has something to open. It is never
+    // streamed: the user asks for it by clicking, rather than reading the
+    // model's working-out scroll past mid-turn.
+    let reasoning = "";
     yield tree({ type: "thinking.started", id: `thinking-${pass}`, parent: "task", label: "Thinking" });
 
     const stream = provider.stream({
@@ -151,6 +166,10 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
       maxTokens: Math.min(settings.maxTokens, model.maxOutputTokens ?? settings.maxTokens),
       temperature: settings.temperature,
       signal: options.signal,
+      // Building is doing, not deliberating. Left to think, this model spends
+      // the whole budget on a private plan it already has and emits nothing.
+      thinking: executing ? false : undefined,
+      requireTool: requireTool && executing,
     });
 
     let cooldowns = 0;
@@ -158,6 +177,7 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
     for await (const event of stream) {
       switch (event.type) {
         case "reasoning":
+          if (reasoning.length < MAX_REASONING_CHARS) reasoning += event.text;
           break;
 
         case "delta": {
@@ -179,7 +199,10 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
             state.answering = true;
           }
           state.answer += event.text;
-          yield { kind: "text", text: event.text };
+          // While building, content is held back until the end of the pass:
+          // it is often a tool call written as prose, and machinery streamed
+          // into the transcript cannot be taken back once it is on screen.
+          if (!executing) yield { kind: "text", text: event.text };
           break;
         }
 
@@ -239,11 +262,31 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
       }
     }
 
+    // A call the model wrote out as text is still a call. Take it.
+    if (executing && state.answer.trim()) {
+      const harvest = harvestToolCalls(state.answer, TOOL_NAMES);
+      if (harvest.calls.length) {
+        state.answer = harvest.text;
+        state.toolCalls.push(...harvest.calls);
+        yield tree({
+          type: "step.completed",
+          id: `recovered-${pass}`,
+          parent: "task",
+          label: `Recovered ${harvest.calls.length} call${harvest.calls.length === 1 ? "" : "s"} from the reply`,
+          detail: harvest.repaired ? "the reply was cut short and was repaired" : undefined,
+        });
+      }
+      if (state.answer.trim()) yield { kind: "text", text: state.answer };
+    }
+
     if (state.thinking) {
       yield tree({
         type: "thinking.completed",
         id: `thinking-${pass}`,
         label: state.answer || state.toolCalls.length ? "Thought through it" : "No answer produced",
+        body: reasoning.trim() || undefined,
+        bodyKind: "thinking",
+        bodyTitle: "What it worked through",
       });
       state.thinking = false;
     }
@@ -256,7 +299,9 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
 
   while (round < MAX_TOOL_ROUNDS) {
     round += 1;
-    yield* attempt(history, round);
+    // After an approved plan the first move is always an action, so the first
+    // round insists on one rather than inviting another round of commentary.
+    yield* attempt(history, round, round === 1);
     if (state.failed || !state.toolCalls.length || !workspace) break;
 
     if (!buildOpen) {
@@ -285,6 +330,9 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
         parent: "build",
         label: outcome.event.label,
         detail: outcome.event.detail,
+        body: outcome.event.body,
+        bodyKind: outcome.event.bodyKind,
+        bodyTitle: outcome.event.bodyTitle,
       });
 
       if (outcome.event.type.startsWith("file.")) {
@@ -496,7 +544,7 @@ function needsMore(state: { answer: string; finish: string }): boolean {
 function describeCall(call: ToolCall): string {
   const name = call.function.name;
   try {
-    const args = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
+    const args = (parseLooseJson(call.function.arguments || "{}") ?? {}) as Record<string, unknown>;
     if (name === "write_file") return `Writing ${String(args.path ?? "file")}`;
     if (name === "read_file") return `Reading ${String(args.path ?? "file")}`;
     if (name === "run_command") {

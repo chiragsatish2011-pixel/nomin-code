@@ -52,6 +52,11 @@ export interface RendererOptions {
    * shows a head of its own (the thinking orb) and a second one would be noise.
    */
   rootless?: boolean;
+  /**
+   * Called when a row carrying evidence is clicked. The tree does not show the
+   * evidence itself — the host decides where a panel of that size belongs.
+   */
+  onSelect?: (nodeId: string) => void;
 }
 
 /**
@@ -69,6 +74,7 @@ export class TreeRenderer {
   private readonly reduced: boolean;
   private readonly follow: boolean;
   private readonly rootless: boolean;
+  private readonly onSelect: ((nodeId: string) => void) | undefined;
   private readonly defs: SVGDefsElement;
   private readonly auroraGradient: SVGLinearGradientElement;
   private readonly uid = `nomin-${Math.random().toString(36).slice(2, 8)}`;
@@ -84,6 +90,7 @@ export class TreeRenderer {
     this.title = options.title;
     this.follow = options.follow ?? true;
     this.rootless = options.rootless ?? false;
+    this.onSelect = options.onSelect;
     this.reduced =
       options.reducedMotion ??
       (typeof matchMedia === "function" &&
@@ -239,6 +246,22 @@ export class TreeRenderer {
     const ellipsis = svg("tspan", { fill: this.theme.muted });
     label.append(document.createTextNode(""), ellipsis, detail);
     group.append(halo, dot, mark, label);
+
+    // A row with evidence behind it opens on click. Rows without it stay inert
+    // rather than offering a gesture that does nothing.
+    if (this.onSelect && !isRoot) {
+      const reach = svg("rect", {
+        x: -14,
+        y: -metrics.rowHeight / 2,
+        height: metrics.rowHeight,
+        width: 520,
+        fill: "transparent",
+      });
+      group.prepend(reach);
+      group.addEventListener("click", () => {
+        if (row.node.body) this.onSelect?.(row.node.id);
+      });
+    }
 
     let blob: SVGPathElement | undefined;
     let blobGroup: SVGGElement | undefined;
@@ -444,6 +467,14 @@ export class TreeRenderer {
     if (v.label.firstChild && v.label.firstChild.textContent !== text) {
       v.label.firstChild.textContent = text;
     }
+    // A row only advertises itself as openable once its evidence has arrived.
+    if (this.onSelect) {
+      const openable = Boolean(node.body);
+      if (v.group.style.cursor !== (openable ? "pointer" : "")) {
+        v.group.style.cursor = openable ? "pointer" : "";
+      }
+    }
+
     v.ellipsis.textContent =
       node.state === "active" && !isRoot ? ".".repeat(1 + Math.floor((now / 420) % 3)) : "";
 
