@@ -1,3 +1,4 @@
+import { backendOf, endpointOf } from "./registry.js";
 import type { ModelDescriptor, RetryPolicy } from "./registry.js";
 
 /**
@@ -46,7 +47,7 @@ export const DOCTORS: DoctorSpec[] = [
     // The 253B Nemotron is listed by the provider but not servable (404), so
     // diagnosis runs on the 550B Ultra — on its own key, so it never competes
     // with Trion for the worker budget.
-    backend: "nvidia/nemotron-3-ultra-550b-a55b",
+    backend: backendOf("NOMIN_DOCTOR_1_MODEL"),
     apiKeyEnv: "NOMIN_DOCTOR_1_API_KEY",
     maxOutputTokens: 4096,
     temperature: 0.1,
@@ -55,7 +56,7 @@ export const DOCTORS: DoctorSpec[] = [
     id: "d2",
     role: "repair",
     publicLabel: "Writing the repair",
-    backend: "nvidia/nemotron-3-super-120b-a12b",
+    backend: backendOf("NOMIN_DOCTOR_2_MODEL"),
     apiKeyEnv: "NOMIN_DOCTOR_2_API_KEY",
     maxOutputTokens: 8192,
     temperature: 0.15,
@@ -64,7 +65,7 @@ export const DOCTORS: DoctorSpec[] = [
     id: "d3",
     role: "verification",
     publicLabel: "Checking the repair holds",
-    backend: "nvidia/nemotron-3-super-120b-a12b",
+    backend: backendOf("NOMIN_DOCTOR_3_MODEL"),
     apiKeyEnv: "NOMIN_DOCTOR_3_API_KEY",
     maxOutputTokens: 4096,
     temperature: 0,
@@ -73,7 +74,7 @@ export const DOCTORS: DoctorSpec[] = [
     id: "d4",
     role: "regression",
     publicLabel: "Looking for knock-on damage",
-    backend: "nvidia/nemotron-3-super-120b-a12b",
+    backend: backendOf("NOMIN_DOCTOR_4_MODEL"),
     apiKeyEnv: "NOMIN_DOCTOR_4_API_KEY",
     maxOutputTokens: 4096,
     temperature: 0.1,
@@ -82,7 +83,7 @@ export const DOCTORS: DoctorSpec[] = [
     id: "d5",
     role: "surface",
     publicLabel: "Checking what the user sees",
-    backend: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+    backend: backendOf("NOMIN_DOCTOR_5_MODEL"),
     apiKeyEnv: "NOMIN_DOCTOR_5_API_KEY",
     maxOutputTokens: 2048,
     temperature: 0,
@@ -91,7 +92,7 @@ export const DOCTORS: DoctorSpec[] = [
     id: "d6",
     role: "record",
     publicLabel: "Recording what changed",
-    backend: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+    backend: backendOf("NOMIN_DOCTOR_6_MODEL"),
     apiKeyEnv: "NOMIN_DOCTOR_6_API_KEY",
     maxOutputTokens: 2048,
     temperature: 0,
@@ -105,7 +106,7 @@ export function doctorModel(spec: DoctorSpec): ModelDescriptor {
     status: "available",
     backend: spec.backend,
     provider: "nvidia",
-    endpoint: process.env.NVIDIA_BASE_URL ?? "https://integrate.api.nvidia.com/v1",
+    endpoint: endpointOf(),
     apiKeyEnv: spec.apiKeyEnv,
     contextTokens: 128_000,
     maxOutputTokens: spec.maxOutputTokens,

@@ -60,13 +60,34 @@ const DEFAULT_RETRY: RetryPolicy = {
   retryStatuses: [408, 409, 425, 429, 500, 502, 503, 504],
 };
 
+
+/**
+ * Where the backend identifiers come from.
+ *
+ * The product names in this file are Nomin's own and are meant to be read.
+ * What sits behind them is not: naming the vendor and the base model in a
+ * public repository tells anybody exactly what Trion is, which is the one
+ * thing the interface is careful never to leak. They move to the environment,
+ * and the fallbacks here are deliberately generic so a missing variable
+ * produces a clear failure rather than a quiet disclosure.
+ */
+export function backendOf(key: string, fallback = ""): string {
+  const fromEnv =
+    typeof process !== "undefined" ? (process.env?.[key] ?? "") : "";
+  return fromEnv || fallback;
+}
+
+export function endpointOf(fallback = ""): string {
+  return backendOf("NOMIN_BASE_URL", fallback);
+}
+
 export const TRION_1_5: ModelDescriptor = {
   name: "Trion 1.5",
   role: "worker",
   status: "available",
-  backend: "nvidia/nemotron-3-ultra-550b-a55b",
+  backend: backendOf("NOMIN_WORKER_MODEL"),
   provider: "nvidia",
-  endpoint: "https://integrate.api.nvidia.com/v1",
+  endpoint: endpointOf(),
   apiKeyEnv: "NVIDIA_API_KEY",
   contextTokens: 128_000,
   maxOutputTokens: 8192,
@@ -109,9 +130,9 @@ export const SUPERVISOR: ModelDescriptor = {
   name: "Nomin Monitor",
   role: "supervisor",
   status: "available",
-  backend: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+  backend: backendOf("NOMIN_VISION_MODEL"),
   provider: "nvidia",
-  endpoint: "https://integrate.api.nvidia.com/v1",
+  endpoint: endpointOf(),
   apiKeyEnv: "NOMIN_SUPERVISOR_API_KEY",
   contextTokens: 128_000,
   maxOutputTokens: 900,

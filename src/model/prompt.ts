@@ -31,7 +31,9 @@ Always put your answer in the visible reply, never empty, and never reveal your 
  * the message list so it never disturbs the cached prefix.
  */
 export const WORK_PROMPT = `You have tools and an approved plan. Build it for real:
-- write_file writes complete files to the workspace; never paste a whole file into the reply and never write a partial file or a placeholder
+- write_file writes files to the workspace; never paste a whole file into the reply and never leave a placeholder
+- a long file will not fit in one reply. For anything past roughly 120 lines, write the opening section with write_file and then add the rest with append_file, a section at a time, until the file is finished. Several complete calls beat one that gets cut off
+- append_file continues a file from exactly where it stops; send only file content in it, never a sentence about what you are doing
 - read_file before editing anything that already exists; list_files when you resume work
 - run_command (npm, npx, node, tsc, vite) to install, build and test what you wrote
 - follow the approved plan in order, then verify: run it, read the output, fix what fails, run it again

@@ -18,6 +18,12 @@ export class NvidiaProvider implements Provider {
 
   constructor(model: ModelDescriptor, apiKey: string) {
     if (!apiKey) throw new Error(`Missing ${model.apiKeyEnv} — set it in .env`);
+    // A blank backend means the identifier was never configured. Failing here
+    // is far better than sending an empty model name and reading the
+    // provider's confused answer as a Nomin bug.
+    if (!model.backend) {
+      throw new Error(`Missing the backend id for ${model.name} — set it in .env`);
+    }
     this.model = model;
     this.apiKey = apiKey;
   }
