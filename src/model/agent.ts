@@ -134,6 +134,8 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
     answering: false,
     finish: "",
     toolCalls: [] as ToolCall[],
+    /** Set when a call had to be repaired, i.e. the reply was cut off. */
+    truncated: false,
   };
 
   const tree = (event: TreeFrame): TurnFrame => {
@@ -154,6 +156,7 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
   ): AsyncGenerator<TurnFrame> {
     state.thinking = true;
     state.toolCalls = [];
+    state.truncated = false;
     // Kept so the finished thinking row has something to open. It is never
     // streamed: the user asks for it by clicking, rather than reading the
     // model's working-out scroll past mid-turn.
@@ -268,6 +271,7 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
       if (harvest.calls.length) {
         state.answer = harvest.text;
         state.toolCalls.push(...harvest.calls);
+        if (harvest.repaired) state.truncated = true;
         yield tree({
           type: "step.completed",
           id: `recovered-${pass}`,
@@ -344,6 +348,35 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
         ...history,
         { role: "tool", tool_call_id: call.id, name: call.function.name, content: outcome.output },
       ];
+    }
+
+    // A file cut off at the token ceiling used to be left as it fell — which
+    // is how a page ends mid-rule. Re-sending the whole file would only
+    // truncate again, so the model is shown where the file actually stops and
+    // told to continue it from there.
+    if (state.truncated || state.finish === "length") {
+      const unfinished = await lastWritten(workspace, state.toolCalls);
+      if (unfinished) {
+        yield tree({
+          type: "step.started",
+          id: `finish-${round}`,
+          parent: "build",
+          label: `Finishing ${unfinished.path}`,
+          detail: "cut off at the limit",
+        });
+        history = [
+          ...history,
+          {
+            role: "user",
+            content:
+              `${unfinished.path} was cut off and is incomplete. It currently ends with:\n\n` +
+              `${unfinished.tail}\n\n` +
+              `Call append_file on ${unfinished.path} to continue from exactly that point until the file is complete. ` +
+              `Do not repeat what is already there, do not start the file again, and write only file content — no commentary.`,
+          },
+        ];
+        state.truncated = false;
+      }
     }
 
     state.answer = "";
@@ -572,4 +605,30 @@ function lastUserMessage(messages: Message[]): string {
     }
   }
   return "";
+}
+
+/**
+ * The file a truncated round was in the middle of writing, and how it ends.
+ *
+ * The tail is what the model needs to continue seamlessly: without it, it
+ * guesses where it stopped and either repeats a block or skips one.
+ */
+async function lastWritten(
+  workspace: Workspace | null,
+  calls: ToolCall[],
+): Promise<{ path: string; tail: string } | null> {
+  if (!workspace) return null;
+  for (let i = calls.length - 1; i >= 0; i--) {
+    const call = calls[i];
+    if (!call || (call.function.name !== "write_file" && call.function.name !== "append_file")) {
+      continue;
+    }
+    const args = (parseLooseJson(call.function.arguments || "{}") ?? {}) as Record<string, unknown>;
+    const path = String(args.path ?? "");
+    if (!path) continue;
+    const content = await workspace.read(path).catch(() => null);
+    if (content === null) continue;
+    return { path, tail: content.slice(-400) };
+  }
+  return null;
 }

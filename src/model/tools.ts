@@ -61,6 +61,22 @@ export const TOOLS: ToolDefinition[] = [
   {
     type: "function",
     function: {
+      name: "append_file",
+      description:
+        "Add text to the end of an existing file. Use this to finish a file that was cut off, or to write a long file in several parts, rather than re-sending the whole thing.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "Path inside the workspace, e.g. index.html" },
+          content: { type: "string", description: "Text to add at the end, continuing exactly where the file stops." },
+        },
+        required: ["path", "content"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "run_command",
       description:
         "Run a command in the workspace to install, build or test. Allowed: npm, npx, node, tsc, vite.",
@@ -147,7 +163,7 @@ export async function runTool(
 
       case "write_file": {
         const path = String(args.path ?? "");
-        const content = String(args.content ?? "");
+        const content = cleanContent(String(args.content ?? ""));
         const existed = await workspace.exists(path);
         const file = await workspace.write(path, content);
         return {
@@ -161,6 +177,23 @@ export async function runTool(
             body: content,
             bodyKind: "code",
             bodyTitle: file.path,
+          },
+        };
+      }
+
+      case "append_file": {
+        const path = String(args.path ?? "");
+        const content = cleanContent(String(args.content ?? ""));
+        const file = await workspace.append(path, content);
+        return {
+          output: `Appended to ${file.path}; it is now ${file.bytes} bytes.`,
+          event: {
+            type: "file.modified",
+            label: `Continued ${file.path}`,
+            detail: `+${content.split("\n").length} lines`,
+            body: content,
+            bodyKind: "code",
+            bodyTitle: `${file.path} (added)`,
           },
         };
       }
@@ -198,6 +231,30 @@ function fail(name: string, message: string): ToolOutcome {
     output: `Error: ${message}`,
     event: { type: "tool.failed", label: `${name} failed`, detail: message.slice(0, 80), failed: true },
   };
+}
+
+/**
+ * Keep the model's narration out of the file.
+ *
+ * Asked to continue a file that was cut off, the model sometimes answers the
+ * way it would answer a person — "The user wants me to continue the HTML from
+ * where it was cut off" — and that sentence lands in the file, because it was
+ * passed as the content argument. It is only ever a leading line or two, and
+ * only ever before the real content starts, so it can be removed without
+ * touching anything the file legitimately contains.
+ */
+function cleanContent(content: string): string {
+  const narration =
+    /^(?:(?:the user|they)\s+(?:wants?|asked|is asking)|let me|i'?ll |i will |i'?m going to|continuing (?:from|the)|here(?:'s| is) (?:the|my)|picking up|resuming)\b[^\n]*\n/i;
+
+  let out = content;
+  // At most two, so a file that genuinely opens with prose keeps it.
+  for (let pass = 0; pass < 2; pass++) {
+    const trimmed = out.replace(/^[\n\s]+/, "");
+    if (!narration.test(trimmed)) break;
+    out = trimmed.replace(narration, "");
+  }
+  return out === content ? content : out.replace(/^[\n\s]+/, "");
 }
 
 /** The names the turn offers, for recognising a call written as prose. */

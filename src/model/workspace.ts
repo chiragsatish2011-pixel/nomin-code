@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
@@ -154,6 +154,31 @@ export class Workspace {
     await writeFile(full, content, "utf8");
     const info = await stat(full);
     return { path: relative(this.root, full).split(sep).join("/"), bytes: info.size, modified: info.mtimeMs, created: !existed };
+  }
+
+  /**
+   * Add to the end of a file.
+   *
+   * A page of any real size does not fit in one completion, so writing it in
+   * one call and hoping is how files end up truncated mid-rule. Appending lets
+   * a long file be built across several calls without re-sending — and without
+   * re-truncating — everything already written.
+   */
+  async append(path: string, content: string): Promise<WorkspaceFile> {
+    const full = this.resolveInside(path);
+    const existing = await stat(full).then((info) => info.size, () => 0);
+    if (existing + content.length > MAX_FILE_BYTES) {
+      throw new Error("That file would grow past the size limit; split it into separate files.");
+    }
+    await mkdir(join(full, ".."), { recursive: true });
+    await appendFile(full, content, "utf8");
+    const info = await stat(full);
+    return {
+      path: relative(this.root, full).split(sep).join("/"),
+      bytes: info.size,
+      modified: info.mtimeMs,
+      created: existing === 0,
+    };
   }
 
   async exists(path: string): Promise<boolean> {

@@ -46,14 +46,30 @@ export class NvidiaProvider implements Provider {
 
       if (response.ok && response.body) {
         let streamError = false;
-        for await (const event of this.readStream(response.body)) {
-          if (event.type === "error" && event.status) {
-            streamError = true;
-            // Fake the status so the outer retry logic handles it
-            Object.defineProperty(response, "status", { value: event.status });
-            break;
+        try {
+          for await (const event of this.readStream(response.body)) {
+            if (event.type === "error" && event.status) {
+              streamError = true;
+              // Fake the status so the outer retry logic handles it
+              Object.defineProperty(response, "status", { value: event.status });
+              break;
+            }
+            yield event;
           }
-          yield event;
+        } catch (error) {
+          // A timeout or a dropped connection part-way through a stream is a
+          // transport failure like any other: it used to escape the generator
+          // and take the whole process with it, which is the worst possible
+          // outcome for a long build that was nearly finished.
+          if (attempt >= retry.maxAttempts) {
+            yield { type: "error", message: describe(error) };
+            return;
+          }
+          const wait = backoff(attempt, this.model);
+          yield { type: "rate_limit", status: 0, waitSeconds: Math.round(wait / 1000), attempt };
+          await sleep(wait, request.signal);
+          yield { type: "cooldown_done", attempt };
+          continue;
         }
         if (!streamError) return;
       }
