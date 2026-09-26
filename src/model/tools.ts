@@ -1,4 +1,4 @@
-import { parseLooseJson } from "./tooltext.js";
+import { parseLooseJson, unfence } from "./tooltext.js";
 import type { Workspace } from "./workspace.js";
 import type { ToolDefinition } from "./types.js";
 
@@ -270,29 +270,6 @@ function cleanContent(content: string): string {
     out = trimmed.replace(narration, "");
   }
   return out === content ? content : out.replace(/^[\n\s]+/, "");
-}
-
-/**
- * Take a file out of the code fence a model wrapped it in.
- *
- * Asked for file contents, the model often answers the way it answers a person:
- * ```html, the page, ```. Passed straight through, those three backticks become
- * the first line of the file — which for an HTML page means the browser renders
- * them, and for anything compiled means a syntax error on line 1.
- *
- * Only a wrapper is removed: the fence has to open at the very start and close
- * at the very end with nothing after it, and there must be no other fence in
- * between. A markdown file that legitimately contains fenced blocks therefore
- * keeps every one of them.
- */
-function unfence(content: string): string {
-  const trimmed = content.trim();
-  const opening = /^```[^\n]*\n/.exec(trimmed);
-  if (!opening || !trimmed.endsWith("```")) return content;
-
-  const inner = trimmed.slice(opening[0].length, -3);
-  if (inner.includes("```")) return content;
-  return inner.replace(/\n[ \t]*$/, "");
 }
 
 /** The names the turn offers, for recognising a call written as prose. */

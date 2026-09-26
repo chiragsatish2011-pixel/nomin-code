@@ -13,6 +13,10 @@
     },
     "api/review.ts": {
       "maxDuration": 120
+    },
+    "api/doctors.ts": {
+      "maxDuration": 300,
+      "memory": 1024
     }
   },
   "headers": [

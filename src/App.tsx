@@ -68,6 +68,7 @@ export default function App() {
     requestPlanChanges,
     workspaceFiles,
     workspace,
+    callDoctors,
     addManagerNote,
     checkpoints,
     restoreCheckpoint,
@@ -234,11 +235,34 @@ export default function App() {
       .filter(Boolean)
       .join("\n\n");
 
-    // Sent as Nomin's own follow-up, not as words the user typed. What they
-    // see is the manager taking the work back, not an instruction they never
-    // wrote — and the finished result once it has actually been checked.
-    requestFix(brief, true);
-  }, [addManagerNote, messages.length, monitor, planStatus, requestFix, running]);
+    // The repair team first, the worker second.
+    //
+    // Handing the work back to the worker means asking the model that just
+    // failed at this to try the same thing again, with the same context and the
+    // same ceiling. The specialists are the better answer where they exist:
+    // each on its own credential, each with one job, and none of them competing
+    // for the budget the worker needs. Where they do not exist — no doctor keys
+    // configured — nothing changes and the work goes back to the worker exactly
+    // as before.
+    void (async () => {
+      const outcome = await callDoctors({
+        request: [...messages].reverse().find((message) => message.role === "user")?.content ?? "",
+        finding: verdict.summary,
+        issues: verdict.issues,
+        runtimeErrors: monitor.runtimeErrors,
+      });
+      if (outcome.ran && outcome.status !== "failed" && outcome.files.length) {
+        // The files are already back in the workspace; what is left is saying
+        // so, in the same voice that sent the work back.
+        addManagerNote(outcome.summary);
+        return;
+      }
+      // Sent as Nomin's own follow-up, not as words the user typed. What they
+      // see is the manager taking the work back, not an instruction they never
+      // wrote — and the finished result once it has actually been checked.
+      requestFix(brief, true);
+    })();
+  }, [addManagerNote, callDoctors, messages, monitor, planStatus, requestFix, running]);
 
   /**
    * Conversation mode.

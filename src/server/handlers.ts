@@ -8,6 +8,7 @@ import {
   SUPERVISOR_MODEL_ENVS,
   TRION_1_5,
 } from "../model/registry.js";
+import { repair } from "../model/repair.js";
 import { createSupervisor } from "../model/supervisor.js";
 import { describeMedia, visionContext } from "../model/vision.js";
 import { Workspace } from "../model/workspace.js";
@@ -119,6 +120,117 @@ export async function handleReview(req: IncomingMessage, res: ServerResponse): P
       usedModel: false,
     });
   }
+}
+
+/**
+ * POST /api/doctors — the repair team, when the manager sends work back.
+ *
+ * It streams rather than answering once, for the same reason a turn does: six
+ * specialists take long enough that silence is indistinguishable from a hang,
+ * and the frames are the same shape the chat endpoint emits, so the client
+ * folds them into the work tree it already draws.
+ *
+ * A deployment with no doctor credentials answers immediately with ran:false,
+ * and the client falls back to handing the work to the worker as before.
+ */
+export async function handleDoctors(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (req.method !== "POST") {
+    json(res, 405, { error: "Method not allowed" });
+    return;
+  }
+
+  const body = await readJson(req);
+  const controller = new AbortController();
+  res.on("close", () => {
+    if (!res.writableEnded) controller.abort();
+  });
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+
+  const send = (frame: unknown) => res.write(`data: ${JSON.stringify(frame)}\n\n`);
+
+  try {
+    const chain = repair({
+      request: String(body.request ?? ""),
+      finding: String(body.finding ?? ""),
+      issues: Array.isArray(body.issues) ? body.issues.map(String) : [],
+      runtimeErrors: Array.isArray(body.runtimeErrors) ? body.runtimeErrors.map(String) : [],
+      files: Array.isArray(body.files)
+        ? body.files.map((file: { path?: unknown; content?: unknown }) => ({
+            path: String(file.path ?? ""),
+            content: String(file.content ?? ""),
+          }))
+        : [],
+      screenshot: typeof body.screenshot === "string" ? body.screenshot : undefined,
+    });
+
+    let step = await chain.next();
+    let opened = false;
+    while (!step.done) {
+      if (!opened) {
+        send({ kind: "tree", event: { type: "doctor.started", id: "repair", label: "A specialist is looking" } });
+        opened = true;
+      }
+      const item = step.value;
+      // One row per specialist. The user is told that someone is working and
+      // what they found — never which model, or that there are six of them.
+      send({
+        kind: "tree",
+        event: {
+          type: "step.completed",
+          id: `doctor-${item.id}`,
+          parent: "repair",
+          label: item.label,
+          detail: item.detail,
+          body: item.body,
+          bodyKind: item.id === "d2" ? "code" : "text",
+          bodyTitle: item.label,
+        },
+      });
+      step = await chain.next();
+    }
+
+    const result = step.value;
+    if (opened) {
+      send({
+        kind: "tree",
+        event: {
+          type: result.status === "failed" ? "doctor.failed" : "doctor.completed",
+          id: "repair",
+          label: result.summary,
+        },
+      });
+    }
+    if (result.files.length) {
+      send({
+        kind: "files",
+        files: result.files.map((file) => ({
+          path: file.path,
+          bytes: Buffer.byteLength(file.content, "utf8"),
+          content: file.content,
+        })),
+      });
+    }
+    send({ kind: "repair", result: { ...result, files: result.files.map((file) => file.path) } });
+  } catch (error) {
+    send({
+      kind: "repair",
+      result: {
+        ran: false,
+        status: "failed",
+        files: [],
+        summary: error instanceof Error ? error.message : "The repair could not run.",
+        steps: [],
+      },
+    });
+  }
+  send({ kind: "end" });
+  res.end();
 }
 
 /** POST /api/vision — frames in, words out. */

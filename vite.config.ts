@@ -28,13 +28,14 @@ function agentApi(env: Record<string, string>): Plugin {
     configureServer(server: ViteDevServer) {
       // The same handlers production runs. Mounting them here is what keeps
       // "works on my machine" from meaning "missing in production".
-      const routes = ["chat", "review", "vision", "evidence", "files", "health"] as const;
+      const routes = ["chat", "review", "doctors", "vision", "evidence", "files", "health"] as const;
       for (const route of routes) {
         server.middlewares.use(`/api/${route}`, async (req: IncomingMessage, res: ServerResponse) => {
           const handlers = (await server.ssrLoadModule(handlersEntry)) as typeof import("./src/server/handlers.js");
           const handler = {
             chat: handlers.handleChat,
             review: handlers.handleReview,
+            doctors: handlers.handleDoctors,
             vision: handlers.handleVision,
             evidence: handlers.handleEvidence,
             files: handlers.handleFiles,

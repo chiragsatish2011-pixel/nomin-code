@@ -1,14 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
   <defs>
-    <linearGradient id="a" x1="10" y1="16" x2="54" y2="48" gradientUnits="userSpaceOnUse">
+    <linearGradient id="a" x1="250" y1="271" x2="1192" y2="938" gradientUnits="userSpaceOnUse">
       <stop stop-color="#a07dff"/><stop offset=".55" stop-color="#7132f5"/><stop offset="1" stop-color="#2ed3c6"/>
     </linearGradient>
   </defs>
   <rect width="64" height="64" rx="16" fill="#0c0b12"/>
-  <g transform="translate(9 14.5) scale(0.23)" fill="url(#a)" stroke="url(#a)" stroke-width="9" stroke-linejoin="round">
-    <path d="M42 54 L64 54 L44 142 L21 142 Z"/>
-    <path d="M58 8 L96 8 L142 142 L103 142 Z"/>
-    <path d="M150 8 L192 8 L187 30 L141 51 Z"/>
-    <path d="M141 59 L132 100 L151 142 L170 142 L187 38 Z"/>
+  <g transform="translate(8 14.9) scale(0.0503) translate(-244 -265)" fill="url(#a)" stroke="url(#a)" stroke-width="200" stroke-linejoin="round">
+    <path d="M408 428 L538 428 L421 938 L250 938 Z"/>
+    <path d="M497 271 L690 271 L918 938 L752 938 Z"/>
+    <path d="M990 271 L1192 271 L1160 392 L948 452 Z"/>
+    <path d="M955 458 L1145 425 L1008 938 L925 938 Z"/>
   </g>
 </svg>

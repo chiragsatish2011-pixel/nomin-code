@@ -61,8 +61,18 @@ export interface WorkspaceFileRef {
   bytes: number;
 }
 
+export interface RepairOutcome {
+  /** False when no repair team is configured — the caller falls back. */
+  ran: boolean;
+  status: "repaired" | "unchanged" | "failed";
+  /** The paths that were rewritten. */
+  files: string[];
+  summary: string;
+}
+
 interface Frame {
-  kind: "tree" | "text" | "error" | "usage" | "verdict" | "files" | "end";
+  kind: "tree" | "text" | "error" | "usage" | "verdict" | "files" | "repair" | "end";
+  result?: RepairOutcome;
   files?: WorkspaceFileRef[];
   verdict?: Verdict;
   text?: string;
@@ -223,6 +233,102 @@ export function useAgent() {
       return existing.slice(existing.indexOf(found) + 1);
     });
   }, []);
+
+  /**
+   * Hand a failed review to the repair team.
+   *
+   * Unlike a turn, this writes no message of its own: the specialists' rows
+   * join the events of the turn they are repairing, so the work tree shows the
+   * repair under the work rather than as a second conversation. The files come
+   * back the same way a turn's do, and the caller decides what to say about it.
+   *
+   * Returns ran:false when no team is configured, which is the signal to fall
+   * back to handing the work to the worker.
+   */
+  const callDoctors = useCallback(
+    async (input: {
+      request: string;
+      finding: string;
+      issues: string[];
+      runtimeErrors?: string[];
+      screenshot?: string;
+    }): Promise<RepairOutcome> => {
+      const unavailable: RepairOutcome = {
+        ran: false,
+        status: "unchanged",
+        files: [],
+        summary: "",
+      };
+      if (abort.current) return unavailable;
+
+      const controller = new AbortController();
+      abort.current = controller;
+      setRunning(true);
+      let outcome = unavailable;
+
+      try {
+        const response = await fetch("/api/doctors", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            ...input,
+            files: workspaceRef.current.files.map((file) => ({
+              path: file.path,
+              content: file.content,
+            })),
+          }),
+        });
+        const contentType = response.headers.get("content-type") ?? "";
+        if (!response.ok || !contentType.includes("text/event-stream")) return unavailable;
+        if (!response.body) return unavailable;
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let cut = buffer.indexOf("\n\n");
+          while (cut !== -1) {
+            const raw = buffer.slice(0, cut).trim();
+            buffer = buffer.slice(cut + 2);
+            cut = buffer.indexOf("\n\n");
+            if (!raw.startsWith("data:")) continue;
+            let frame: Frame;
+            try {
+              frame = JSON.parse(raw.slice(5).trim()) as Frame;
+            } catch {
+              continue;
+            }
+            if (frame.kind === "tree" && frame.event) {
+              const event = frame.event;
+              setEvents((prev) => [...prev, event]);
+              setMessages((prev) => attachEvent(prev, event));
+            } else if (frame.kind === "files" && frame.files) {
+              setWorkspace((previous) => {
+                const next = mergeFiles(previous, frame.files!);
+                setActiveBuild((current) => chooseBuild(previous, next, current));
+                return next;
+              });
+            } else if (frame.kind === "repair" && frame.result) {
+              outcome = frame.result;
+            }
+          }
+        }
+      } catch {
+        // A repair that cannot run is not a failed turn; the caller falls back.
+        return unavailable;
+      } finally {
+        abort.current = null;
+        setRunning(false);
+      }
+
+      return outcome;
+    },
+    [],
+  );
 
   /**
    * The manager's own line in the transcript. It is display only: it never
@@ -483,6 +589,7 @@ ${content}` }
     requestPlanChanges,
     workspaceFiles,
     workspace,
+    callDoctors,
     addManagerNote,
     checkpoints,
     restoreCheckpoint,

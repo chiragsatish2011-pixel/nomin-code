@@ -130,9 +130,20 @@ rather than pretending to run.
 
 ## The doctor team (self-healing)
 
-Six specialists that run only when Nomin itself is broken, and only on the
-manager's command. They are stronger than the manager by design: the manager
-notices and describes, the doctors diagnose and repair.
+Six specialists that run when the manager sends work back. They are stronger
+than the manager by design: the manager notices and describes, the doctors
+diagnose and repair.
+
+This is what happens *instead of* handing the work to the worker again. Asking
+the model that just failed to try the same thing, with the same context and the
+same ceiling, is the weakest available answer; it is still the fallback when no
+doctor credentials are configured, and nothing about that path changed. Where
+the team exists, `/api/doctors` runs the chain and streams each specialist's row
+into the work tree under the turn it is repairing.
+
+A correction is refused rather than written when it comes back empty, truncated,
+unchanged, or shorter than the file it would replace. A page replaced by a
+fragment of itself is worse than the fault that started the repair.
 
 | Doctor | Role | Runs on |
 |---|---|---|

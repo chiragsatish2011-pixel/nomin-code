@@ -20,7 +20,8 @@ import {
   TRION_1_5,
 } from "../src/model/registry.js";
 import { createSupervisor } from "../src/model/supervisor.js";
-import { availableDoctors, DOCTORS } from "../src/model/doctors.js";
+import { availableDoctors, DOCTORS, type DoctorSpec } from "../src/model/doctors.js";
+import { repair, type ProviderFor } from "../src/model/repair.js";
 import { approvedPlan, call, is, main, ok, scripted, suite, test } from "./harness.js";
 import type { StreamEvent } from "../src/model/types.js";
 
@@ -245,6 +246,113 @@ test("a doctor is on duty once it has a credential", () => {
     DOCTORS.every((doctor) => doctor.backend),
     "every seat carries the model it runs on",
   );
+});
+
+suite("The repair team");
+
+/** Every doctor on duty, each answering with whatever the script gives it. */
+const team = () => Object.fromEntries(DOCTORS.map((d) => [d.apiKeyEnv, "k"])) as NodeJS.ProcessEnv;
+
+const speaking = (lines: Partial<Record<string, string>>): ProviderFor =>
+  (spec: DoctorSpec) => ({
+    id: "nvidia" as const,
+    async *stream() {
+      const said = lines[spec.id];
+      if (said === undefined) {
+        yield { type: "error", message: "off script" } as StreamEvent;
+        return;
+      }
+      yield { type: "delta", text: said } as StreamEvent;
+      yield { type: "done", finishReason: "stop" } as StreamEvent;
+    },
+  });
+
+const page = (body: string) => `<!doctype html>\n<html>\n<body>\n${body}\n</body>\n</html>\n`;
+const original = page("<h1>Coffee</h1>\n" + "<p>filler</p>\n".repeat(30));
+const fixed = page("<h1>Coffee</h1>\n<nav>Menu</nav>\n" + "<p>filler</p>\n".repeat(30));
+
+async function runChain(providers: ProviderFor, env = team(), files = [{ path: "index.html", content: original }]) {
+  const chain = repair(
+    {
+      request: "Build a landing page for a coffee shop",
+      finding: "The page has no navigation",
+      issues: ["No nav element"],
+      files,
+    },
+    env,
+    providers,
+  );
+  const seen: string[] = [];
+  let step = await chain.next();
+  while (!step.done) {
+    seen.push(step.value.id);
+    step = await chain.next();
+  }
+  return { seen, result: step.value };
+}
+
+test("with no team configured it does not run, so the worker still gets the work", async () => {
+  const { result } = await runChain(speaking({}), {} as NodeJS.ProcessEnv);
+  is(result.ran, false, "it reports that it did not run");
+  is(result.files.length, 0, "and changes nothing");
+});
+
+test("the chain diagnoses, repairs, checks and records", async () => {
+  const { seen, result } = await runChain(
+    speaking({
+      d1: "The page never declares a nav element.",
+      d2: fixed,
+      d3: "OK\nThe nav is present.",
+      d4: "OK\nNothing else depends on it.",
+      d6: "Added the missing navigation to the page.",
+    }),
+  );
+  is(result.ran, true, "it ran");
+  is(result.status, "repaired", "and the repair held");
+  is(result.files.length, 1, "one file came back");
+  is(result.files[0]?.path, "index.html", "the one that was wrong");
+  ok(result.files[0]?.content.includes("<nav>Menu</nav>"), "carrying the correction");
+  ok(result.summary.startsWith("Added the missing navigation"), `the record line is the summary: ${result.summary}`);
+  ok(seen.includes("d1") && seen.includes("d2") && seen.includes("d3"), `each specialist reported: ${seen.join(",")}`);
+});
+
+test("a check that finds a problem is carried into the summary", async () => {
+  const { result } = await runChain(
+    speaking({
+      d1: "No nav.",
+      d2: fixed,
+      d3: "OK\nThe nav is present.",
+      d4: "PROBLEM\nThe stylesheet targets the old markup.",
+      d6: "Added the navigation.",
+    }),
+  );
+  is(result.status, "repaired", "the repair itself held");
+  ok(result.summary.includes("stylesheet"), `the concern reaches the user: ${result.summary}`);
+});
+
+test("a fragment is refused rather than written over the page", async () => {
+  // The failure that started all of this, in the repair path: a correction
+  // that is only part of the file would replace the whole of it.
+  const { result } = await runChain(speaking({ d1: "No nav.", d2: "<nav>Menu</nav>" }));
+  is(result.status, "failed", "the repair is refused");
+  is(result.files.length, 0, "and nothing is written");
+  ok(result.summary.includes("fragment"), `the reason is stated: ${result.summary}`);
+});
+
+test("a repair that changed nothing is not reported as a repair", async () => {
+  const { result } = await runChain(speaking({ d1: "No nav.", d2: original }));
+  is(result.status, "failed", "an unchanged file is not a correction");
+  is(result.files.length, 0, "nothing is written");
+});
+
+test("the team works with only the two specialists it needs", async () => {
+  const two = {
+    NOMIN_DOCTOR_1_API_KEY: "k",
+    NOMIN_DOCTOR_2_API_KEY: "k",
+  } as NodeJS.ProcessEnv;
+  const { seen, result } = await runChain(speaking({ d1: "No nav.", d2: fixed }), two);
+  is(result.status, "repaired", "diagnosis and repair are enough");
+  ok(!seen.includes("d3"), "the specialists that are off duty are simply skipped");
 });
 
 suite("The manager's own line");
