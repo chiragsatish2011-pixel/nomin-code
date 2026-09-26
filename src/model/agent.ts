@@ -85,14 +85,22 @@ export interface TurnOptions {
    * canvas never sees what was built.
    */
   files?: Array<{ path: string; content: string }>;
+  /**
+   * The provider to run on. Defaults to the configured one; supplying it lets
+   * the loop be driven by a scripted stub, which is the only way to test how a
+   * turn responds to a finish reason or a truncated round without spending a
+   * real call on it.
+   */
+  provider?: Provider;
 }
 
 /** Files larger than this come back as a listing only. */
 const MAX_RETURNED_BYTES = 400_000;
 
-/** How many tool rounds one turn may take before it must report back. */
+/** How much private reasoning is kept per pass, so a row has something to open. */
 const MAX_REASONING_CHARS = 20_000;
 
+/** How many tool rounds one turn may take before it must report back. */
 const MAX_TOOL_ROUNDS = 16;
 /** How many times a truncated turn may be continued before giving up. */
 const MAX_CONTINUATIONS = 6;
@@ -108,7 +116,7 @@ export function createProvider(modelName?: string, env = process.env): Provider 
 
 export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> {
   const model = getModel(options.model);
-  const provider = createProvider(options.model);
+  const provider = options.provider ?? createProvider(options.model);
   const supervisor = createSupervisor();
   const startedAt = Date.now();
 
@@ -157,10 +165,22 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
     state.thinking = true;
     state.toolCalls = [];
     state.truncated = false;
+    // Reset with the rest of the per-pass state, and for the same reason.
+    // Left standing, one round that hit the token ceiling made every later
+    // round in the turn look truncated too — so the "finish this file" nudge
+    // was re-sent after rounds that had finished cleanly, and the model was
+    // asked to continue a file that was already complete. What came back was
+    // an append with nothing real to add.
+    state.finish = "";
     // Kept so the finished thinking row has something to open. It is never
     // streamed: the user asks for it by clicking, rather than reading the
     // model's working-out scroll past mid-turn.
     let reasoning = "";
+    // Measured per pass, so a starved or truncated round can be read off the
+    // work tree instead of inferred from the damage it left behind.
+    let completionTokens = 0;
+    let promptTokens = 0;
+    const answerAtStart = state.answer.length;
     yield tree({ type: "thinking.started", id: `thinking-${pass}`, parent: "task", label: "Thinking" });
 
     const stream = provider.stream({
@@ -243,6 +263,8 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
           break;
 
         case "usage":
+          completionTokens += event.completionTokens;
+          promptTokens += event.promptTokens;
           yield {
             kind: "usage",
             promptTokens: event.promptTokens,
@@ -293,13 +315,59 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
         bodyTitle: "What it worked through",
       });
       state.thinking = false;
+    } else if (reasoning.trim()) {
+      // The row was already closed when the first token of content arrived, so
+      // the user saw "Thinking" finish at the right moment — but the working-out
+      // was then dropped on the floor, and only a turn that produced nothing at
+      // all ever had anything to open. Re-closing the same node attaches it.
+      yield tree({
+        type: "thinking.completed",
+        id: `thinking-${pass}`,
+        label: "Thought through it",
+        body: reasoning.trim(),
+        bodyKind: "thinking",
+        bodyTitle: "What it worked through",
+      });
     }
+
+    // The instrument. Every round says how it ended and what it cost, because
+    // the failures that matter here — a round that stopped at the ceiling, a
+    // round that spent its budget on reasoning and emitted nothing — look
+    // identical from outside unless the numbers are written down.
+    const produced = state.answer.length - answerAtStart;
+    yield tree({
+      type: "round.measured",
+      parent: "task",
+      label: `Round ${pass}`,
+      detail:
+        `${state.finish || "no finish reason"} · ` +
+        `${completionTokens} out · ${state.toolCalls.length} call${state.toolCalls.length === 1 ? "" : "s"}`,
+      body: [
+        `pass            ${pass}`,
+        `finish reason   ${state.finish || "(none reported)"}`,
+        `prompt tokens   ${promptTokens}`,
+        `output tokens   ${completionTokens}`,
+        `token ceiling   ${Math.min(settings.maxTokens, model.maxOutputTokens ?? settings.maxTokens)}`,
+        `thinking pass   ${executing ? "off" : "on"}`,
+        `content chars   ${produced}`,
+        `reasoning chars ${reasoning.length}`,
+        `tool calls      ${state.toolCalls.length}`,
+        `tool call names ${state.toolCalls.map((call) => call.function.name).join(", ") || "(none)"}`,
+        `repaired JSON   ${state.truncated ? "yes" : "no"}`,
+      ].join("\n"),
+      bodyKind: "output",
+      bodyTitle: "How the round ended",
+    });
   }
 
   // --- the loop ---------------------------------------------------------
   let round = 0;
   let buildOpen = false;
   let exhausted = false;
+  // Set at the end of a round that asked for a file to be finished, and read by
+  // the round that answers. It is what lets a destructive write be recognised
+  // as the continuation it was meant to be.
+  let continuing: Continuation | null = null;
 
   while (round < MAX_TOOL_ROUNDS) {
     round += 1;
@@ -319,7 +387,25 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
       { role: "assistant", content: state.answer || null, tool_calls: state.toolCalls },
     ];
 
-    for (const call of state.toolCalls) {
+    // Only the round that was asked to finish a file gets the guard; it is
+    // consumed here so a later round's ordinary write is never second-guessed.
+    const asked = continuing;
+    continuing = null;
+
+    for (const raw of state.toolCalls) {
+      const guarded = guardContinuation(asked, raw);
+      const call = guarded.call;
+      if (guarded.note) {
+        // Worth a row of its own: the file survived, and the reason it nearly
+        // did not is the kind of thing that should not be silent.
+        yield tree({
+          type: "step.completed",
+          id: `rescued-${round}-${call.id}`,
+          parent: "build",
+          label: `Continued ${asked?.path} instead of replacing it`,
+          detail: guarded.note,
+        });
+      }
       yield tree({
         type: "tool.started",
         id: call.id,
@@ -340,7 +426,10 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
       });
 
       if (outcome.event.type.startsWith("file.")) {
-        const path = outcome.output.match(/Wrote ([^\s(]+)/)?.[1];
+        // `append_file` reports "Appended to x", not "Wrote x", so a file only
+        // ever continued was missing from the turn's own record of what it
+        // touched — and therefore from the evidence the manager weighs.
+        const path = outcome.output.match(/(?:Wrote|Appended to) ([^\s(;]+)/)?.[1];
         if (path) touched.set(path, Date.now());
       }
 
@@ -357,6 +446,7 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
     if (state.truncated || state.finish === "length") {
       const unfinished = await lastWritten(workspace, state.toolCalls);
       if (unfinished) {
+        continuing = unfinished;
         yield tree({
           type: "step.started",
           id: `finish-${round}`,
@@ -401,6 +491,21 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
       type: exhausted ? "step.failed" : "step.completed",
       id: "build",
       label: touched.size ? `Wrote ${touched.size} file${touched.size === 1 ? "" : "s"}` : "Finished tool work",
+    });
+  }
+
+  // While executing, the answer is not continued here: a pass re-emits the whole
+  // accumulated answer, so continuing it would print the text twice. What must
+  // not happen is saying nothing — a turn that stopped at the token ceiling is
+  // not a turn that finished, and the manager can only act on what it is told.
+  // This is a real failure in the record, so the review sends the work back.
+  if (executing && needsMore(state)) {
+    yield tree({
+      type: "step.failed",
+      id: "cut-off",
+      parent: "task",
+      label: "The reply was cut off at the token limit",
+      detail: state.finish === "length" ? "ran out of room" : "a code fence was left open",
     });
   }
 
@@ -482,16 +587,23 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
 
   // Hand the workspace back with contents. The client is the durable copy —
   // it survives the next request landing on a different instance, and a reload.
+  // What each file the turn touched actually came to. The manager judges
+  // completeness partly by size, so this is measured rather than assumed.
+  const produced: Array<{ name: string; lines: number }> = [];
   if (workspace) {
     const listing = await workspace.list().catch(() => []);
     const files = [];
     for (const file of listing) {
       if (file.bytes > MAX_RETURNED_BYTES) {
         files.push({ path: file.path, bytes: file.bytes });
+        if (touched.has(file.path)) produced.push({ name: file.path, lines: 0 });
         continue;
       }
       const content = await workspace.read(file.path).catch(() => undefined);
       files.push({ path: file.path, bytes: file.bytes, content });
+      if (touched.has(file.path)) {
+        produced.push({ name: file.path, lines: content ? content.split("\n").length : 0 });
+      }
     }
     if (files.length) yield { kind: "files", files };
   }
@@ -504,7 +616,11 @@ export async function* runTurn(options: TurnOptions): AsyncGenerator<TurnFrame> 
     durationMs: Date.now() - startedAt,
     rateLimited: state.rateLimited,
     empty: !state.answer && !touched.size,
-    files: [...touched.keys()].map((path) => ({ name: path, lines: 0 })),
+    // Every file reported with "0 lines" told the manager nothing about whether
+    // the work was finished — a one-line stub and a finished page read the same.
+    files: produced.length
+      ? produced
+      : [...touched.keys()].map((path) => ({ name: path, lines: 0 })),
   };
 
   yield tree({
@@ -607,6 +723,16 @@ function lastUserMessage(messages: Message[]): string {
   return "";
 }
 
+/** A file left unfinished by a truncated round, and what is needed to finish it. */
+interface Continuation {
+  path: string;
+  /** The last of what is on disk, so the model can continue seamlessly. */
+  tail: string;
+  /** The first of it, for telling a rewrite apart from a continuation. */
+  head: string;
+  bytes: number;
+}
+
 /**
  * The file a truncated round was in the middle of writing, and how it ends.
  *
@@ -616,7 +742,7 @@ function lastUserMessage(messages: Message[]): string {
 async function lastWritten(
   workspace: Workspace | null,
   calls: ToolCall[],
-): Promise<{ path: string; tail: string } | null> {
+): Promise<Continuation | null> {
   if (!workspace) return null;
   for (let i = calls.length - 1; i >= 0; i--) {
     const call = calls[i];
@@ -628,7 +754,60 @@ async function lastWritten(
     if (!path) continue;
     const content = await workspace.read(path).catch(() => null);
     if (content === null) continue;
-    return { path, tail: content.slice(-400) };
+    return {
+      path,
+      tail: content.slice(-400),
+      head: content.trimStart().slice(0, HEAD_MATCH_CHARS),
+      bytes: content.length,
+    };
   }
   return null;
+}
+
+/** How much of a file's opening has to match for a write to be a rewrite. */
+const HEAD_MATCH_CHARS = 24;
+
+/**
+ * Stop a continuation from destroying the file it was asked to finish.
+ *
+ * Told that a file was cut off and to append the rest, the model sometimes
+ * reaches for `write_file` instead — and passes only the remainder, because the
+ * remainder is what it was asked for. That call is correct about the content and
+ * catastrophically wrong about the verb: a page of several hundred lines is
+ * replaced by its own last fragment, and what the user gets is a stub. It read
+ * as the model failing to produce anything; it was the model producing the right
+ * thing and the workspace throwing the rest away.
+ *
+ * A rewrite and a continuation are told apart by where the content starts. A
+ * real rewrite begins the file again — the same doctype, the same opening tag —
+ * while a continuation picks up mid-document. So a shorter write that does not
+ * reproduce the file's own opening is taken as the append it meant to be.
+ */
+function guardContinuation(
+  asked: Continuation | null,
+  call: ToolCall,
+): { call: ToolCall; note?: string } {
+  if (!asked || call.function.name !== "write_file") return { call };
+
+  const args = parseLooseJson(call.function.arguments || "{}") as Record<string, unknown> | null;
+  if (!args) return { call };
+  if (String(args.path ?? "") !== asked.path) return { call };
+
+  const content = String(args.content ?? "");
+  // Nothing to rescue, and an empty write is the tool's own error to report.
+  if (!content) return { call };
+  // Starts the file again, or is at least as long as what is there: a rewrite.
+  if (asked.head && content.trimStart().startsWith(asked.head)) return { call };
+  if (content.length >= asked.bytes) return { call };
+
+  return {
+    call: {
+      ...call,
+      function: {
+        name: "append_file",
+        arguments: JSON.stringify({ path: asked.path, content }),
+      },
+    },
+    note: `a ${content.length}-byte write would have replaced ${asked.bytes} bytes`,
+  };
 }

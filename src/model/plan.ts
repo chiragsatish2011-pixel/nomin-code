@@ -90,12 +90,17 @@ const list = (value: unknown) =>
  * turn, so the work stays anchored to what the user actually agreed to.
  */
 export function planBrief(plan: Plan): string {
-  const steps = plan.steps.map((step, i) => `${i + 1}. ${step.title}`).join("\n");
+  // A plan reaches this function over HTTP as well as from `parsePlan`, so the
+  // shape is not guaranteed even though the type says so. Reading a missing
+  // array threw, and the turn died before its first round — with the tools
+  // already unlocked, because the plan's presence is what unlocks them.
+  const steps = (plan.steps ?? []).map((step, i) => `${i + 1}. ${step.title}`).join("\n");
+  const files = plan.files ?? [];
   return [
     `APPROVED PLAN — build exactly this, in order.`,
     `Objective: ${plan.objective}`,
-    `Steps:\n${steps}`,
-    plan.files.length ? `Files: ${plan.files.join(", ")}` : "",
+    steps ? `Steps:\n${steps}` : "",
+    files.length ? `Files: ${files.join(", ")}` : "",
     `Testing: ${plan.testing || "run what you build"}`,
     `Verification: ${plan.verification || "confirm it runs before claiming success"}`,
     `Use the tools to write real files and run real commands. Do not paste whole files into the reply; write them to the workspace.`,

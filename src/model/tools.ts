@@ -163,7 +163,11 @@ export async function runTool(
 
       case "write_file": {
         const path = String(args.path ?? "");
-        const content = cleanContent(String(args.content ?? ""));
+        const raw = String(args.content ?? "");
+        const content = cleanContent(raw);
+        if (raw && !content.trim()) {
+          return fail(name, `Nothing was left of that content for ${path} once the commentary was removed. Send the file contents.`);
+        }
         const existed = await workspace.exists(path);
         const file = await workspace.write(path, content);
         return {
@@ -184,6 +188,17 @@ export async function runTool(
       case "append_file": {
         const path = String(args.path ?? "");
         const content = cleanContent(String(args.content ?? ""));
+        // An append of nothing used to report the file's unchanged size as a
+        // success. The model read that as "the file is finished", the work tree
+        // showed an edit that never happened, and the manager counted it as
+        // work — three layers agreeing on something that did not occur. It is a
+        // failure, and saying so is what gets the content sent.
+        if (!content.trim()) {
+          return fail(
+            name,
+            `No content was given to add to ${path || "the file"}. Send the text that continues it.`,
+          );
+        }
         const file = await workspace.append(path, content);
         return {
           output: `Appended to ${file.path}; it is now ${file.bytes} bytes.`,
@@ -247,7 +262,7 @@ function cleanContent(content: string): string {
   const narration =
     /^(?:(?:the user|they)\s+(?:wants?|asked|is asking)|let me|i'?ll |i will |i'?m going to|continuing (?:from|the)|here(?:'s| is) (?:the|my)|picking up|resuming)\b[^\n]*\n/i;
 
-  let out = content;
+  let out = unfence(content);
   // At most two, so a file that genuinely opens with prose keeps it.
   for (let pass = 0; pass < 2; pass++) {
     const trimmed = out.replace(/^[\n\s]+/, "");
@@ -255,6 +270,29 @@ function cleanContent(content: string): string {
     out = trimmed.replace(narration, "");
   }
   return out === content ? content : out.replace(/^[\n\s]+/, "");
+}
+
+/**
+ * Take a file out of the code fence a model wrapped it in.
+ *
+ * Asked for file contents, the model often answers the way it answers a person:
+ * ```html, the page, ```. Passed straight through, those three backticks become
+ * the first line of the file — which for an HTML page means the browser renders
+ * them, and for anything compiled means a syntax error on line 1.
+ *
+ * Only a wrapper is removed: the fence has to open at the very start and close
+ * at the very end with nothing after it, and there must be no other fence in
+ * between. A markdown file that legitimately contains fenced blocks therefore
+ * keeps every one of them.
+ */
+function unfence(content: string): string {
+  const trimmed = content.trim();
+  const opening = /^```[^\n]*\n/.exec(trimmed);
+  if (!opening || !trimmed.endsWith("```")) return content;
+
+  const inner = trimmed.slice(opening[0].length, -3);
+  if (inner.includes("```")) return content;
+  return inner.replace(/\n[ \t]*$/, "");
 }
 
 /** The names the turn offers, for recognising a call written as prose. */

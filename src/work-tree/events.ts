@@ -41,7 +41,8 @@ export type AgentEventType =
   | "artifact.created"
   | "doctor.started"
   | "doctor.completed"
-  | "doctor.failed";
+  | "doctor.failed"
+  | "round.measured";
 
 export interface AgentEvent {
   type: AgentEventType;
@@ -156,4 +157,9 @@ export const EVENT_RULES: Record<AgentEventType, Rule> = {
   "doctor.started": { op: "open", kind: "doctor", label: "A specialist is looking" },
   "doctor.completed": { op: "close", state: "done" },
   "doctor.failed": { op: "close", state: "failed" },
+
+  // One row per model round, carrying how it ended and what it cost. A turn
+  // that quietly ran out of tokens is indistinguishable from one that chose to
+  // stop unless the finish reason is written down somewhere a person can read.
+  "round.measured": { op: "leaf", kind: "step", label: "Round", state: "done" },
 };

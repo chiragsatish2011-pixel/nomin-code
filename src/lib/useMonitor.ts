@@ -118,10 +118,13 @@ export function useMonitor(
               durationMs: Date.now() - last.at,
               rateLimited: (last.events ?? []).some((event) => event.type === "cooldown.started"),
               empty: !last.content.trim(),
-              files: canvas.artifacts.map((file) => ({
-                name: file.name,
-                lines: file.code.split("\n").length,
-              })),
+              // `fileList` above already prefers the workspace and falls back to
+              // the canvas. Sending the canvas directly meant that every build
+              // whose files live in the workspace — which is all of them now —
+              // reached the manager as "FILES PRODUCED: none", so it judged
+              // completeness with the one fact that would have settled it
+              // missing, and a finished page looked like an empty turn.
+              files: fileList,
               screenshot: screenshot ?? undefined,
               runtime: runtime ?? undefined,
             },
