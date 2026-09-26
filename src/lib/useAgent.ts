@@ -273,10 +273,7 @@ export function useAgent() {
 
       const now = Date.now();
       const history: ChatMessage[] = [
-        // The manager's notes to the user are display only. Feeding them back
-        // would have the model reading its own reviewer's verdict as though
-        // it were part of the conversation.
-        ...messages.filter((message) => !message.manager),
+        ...messages,
         {
           role: "user",
           content: prompt,
@@ -289,6 +286,14 @@ export function useAgent() {
           })),
         },
       ];
+      // The manager's notes to the user are display only: feeding them back
+      // would have the model reading its own reviewer's verdict as though it
+      // were part of the conversation. They are filtered out of the request
+      // and only the request — filtering them out of `history` dropped them
+      // from the transcript too, because `history` is what is written back
+      // into state, so every note disappeared the moment the user said
+      // anything else and the round trip went unrecorded after all.
+      const outbound = history.filter((message) => !message.manager);
       setMessages([...history, { role: "assistant", content: "", at: now, events: [] }]);
       setEvents([]);
       setUsage(null);
@@ -313,9 +318,9 @@ export function useAgent() {
             // The workspace travels with it — a serverless host keeps no disk
             // of its own between requests.
             files: filesForTurn(workspaceRef.current),
-            messages: history.map(({ role, content }, index) =>
+            messages: outbound.map(({ role, content }, index) =>
               // The description rides with the turn it belongs to.
-              index === history.length - 1 && mediaContext
+              index === outbound.length - 1 && mediaContext
                 ? { role, content: `${mediaContext}
 
 ---

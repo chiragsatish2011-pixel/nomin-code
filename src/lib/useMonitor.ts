@@ -41,7 +41,10 @@ export function useMonitor(
     if (running) return;
     const lastIndex = messages.length - 1;
     const last = messages[lastIndex];
-    if (!last || last.role !== "assistant" || !last.content || last.error) return;
+    // A manager note is the review's own output arriving back as a message.
+    // Reviewing it would judge the verdict instead of the work, and would
+    // overwrite the verdict this one belongs to.
+    if (!last || last.role !== "assistant" || !last.content || last.error || last.manager) return;
 
     // A conversational turn has nothing to verify. Reviewing it wastes a call
     // and puts a meaningless "Verified" badge under a one-line answer.

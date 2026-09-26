@@ -84,7 +84,8 @@ export const isDraft = (file: Artifact) => Boolean(file.partial);
 export function collectArtifacts(messages: ChatMessage[]): Artifact[] {
   const artifacts: Artifact[] = [];
   messages.forEach((message, turn) => {
-    if (message.role !== "assistant" || message.error) return;
+    // The manager's own lines are prose about the work, never the work itself.
+    if (message.role !== "assistant" || message.error || message.manager) return;
     for (const match of message.content.matchAll(FENCE)) {
       const info = (match[1] ?? "").trim();
       const code = (match[2] ?? "").trimEnd();

@@ -201,9 +201,14 @@ export default function App() {
       // Work that was sent back and has now passed gets said out loud. This
       // is the only point at which the user hears about the round trip, and
       // they hear the outcome rather than the failure that started it.
-      if (repairs.current.consecutive > 0 && verdict.status === "verified") {
-        addManagerNote(`Checked and complete. ${verdict.summary}`);
-      }
+      //
+      // "unverified" counts too, in its own words. Only a passing build, test
+      // or verification makes a verdict "verified", and a page built in the
+      // browser runs none of those — so on the deployed site the repair almost
+      // always lands as "unverified", and saying nothing there left the silence
+      // exactly where it was worst: after the manager had said something is
+      // wrong. What it must not do is claim more than it checked.
+      if (repairs.current.consecutive > 0) addManagerNote(resolvedLine(verdict));
       // Back to healthy: the next problem gets a full repair budget again.
       repairs.current = { turn: monitor.turn ?? -1, consecutive: 0 };
       return;
@@ -255,7 +260,8 @@ export default function App() {
 
     const index = messages.length - 1;
     const last = messages[index];
-    if (!last || last.role !== "assistant" || !last.content || spokenFor.current === index) return;
+    if (!last || last.role !== "assistant" || !last.content || last.manager) return;
+    if (spokenFor.current === index) return;
     spokenFor.current = index;
 
     speak(last.content, () => {
@@ -325,7 +331,9 @@ export default function App() {
         keywords: "voice speech microphone talk dictate",
         run: () => setConversation((on) => !on),
       });
-      const lastAnswer = [...messages].reverse().find((item) => item.role === "assistant");
+      const lastAnswer = [...messages]
+        .reverse()
+        .find((item) => item.role === "assistant" && !item.manager);
       if (lastAnswer?.content) {
         list.push({
           id: "read",
@@ -765,6 +773,26 @@ function managerLine(brief: string): string {
   const finding = lines[1] ?? lines[0] ?? "";
   const summary = finding.replace(/^[-*]\s*/, "").slice(0, 160);
   return summary ? `Sent back: ${summary}` : "Sent back to finish the work.";
+}
+
+/**
+ * The closing line: what the manager actually checked, not that it approves.
+ *
+ * It only appears after a repair, so it answers a question the user already
+ * has — "did that get fixed?" — and the useful half of the answer is the
+ * evidence behind it.
+ */
+function resolvedLine(verdict: Verdict): string {
+  const checked = verdict.evidence.filter(Boolean).join(", ");
+  if (verdict.status === "verified") {
+    return checked ? `Checked and complete: ${checked}.` : "Checked and complete.";
+  }
+  // Honest, not a pass: the findings are gone and the work came back, but
+  // nothing here proves it runs — and saying it does is the unsupported claim
+  // this manager exists to catch.
+  return checked
+    ? `Reworked, and the findings are cleared: ${checked}. Nothing here proves it runs.`
+    : "Reworked, and the findings are cleared, though nothing here proves it runs.";
 }
 
 const ManagerMark = () => (
