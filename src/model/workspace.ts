@@ -208,7 +208,13 @@ export class Workspace {
         throw new Error(`"${arg}" needs a person to confirm it; it will not run automatically.`);
       }
       if (SHELL_METACHARACTERS.test(arg)) {
-        throw new Error("Arguments cannot contain shell characters such as & | ; > < ` $ ( ).");
+        // Said as a correction rather than a rule, because the model reads
+        // this and retries: without the alternative it tries the same pipe
+        // again and burns another round.
+        throw new Error(
+          `"${arg}" contains a shell character (& | ; > < \` $ ( )) and there is no shell here. ` +
+            "Pass arguments separately, and to capture output write it to a file from inside the program instead of redirecting.",
+        );
       }
     }
 

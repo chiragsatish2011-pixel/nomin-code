@@ -79,7 +79,9 @@ export const TOOLS: ToolDefinition[] = [
     function: {
       name: "run_command",
       description:
-        "Run a command in the workspace to install, build or test. Allowed: npm, npx, node, tsc, vite.",
+        "Run a command in the workspace to install, build or test. Allowed: npm, npx, node, tsc, vite. " +
+        "There is no shell, so arguments cannot contain & | ; > < ` $ ( ) — no piping, redirection or substitution. " +
+        "To capture output, have the program write a file and read it back. Long-running servers will time out; do not start one to check a page.",
       parameters: {
         type: "object",
         properties: {
