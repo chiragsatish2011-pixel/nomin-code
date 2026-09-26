@@ -165,9 +165,9 @@ export default function App() {
 
   /** Hand a failure straight back to the agent, with the plan still in force. */
   const requestFix = useCallback(
-    (brief: string) => {
+    (brief: string, internal = false) => {
       if (running) return;
-      void send(brief, mode, planStatus === "approved" ? plan : null);
+      void send(brief, mode, planStatus === "approved" ? plan : null, undefined, internal);
     },
     [mode, plan, planStatus, running, send],
   );
@@ -223,7 +223,10 @@ export default function App() {
       .filter(Boolean)
       .join("\n\n");
 
-    requestFix(brief);
+    // Sent as Nomin's own follow-up, not as words the user typed. What they
+    // see is the manager taking the work back, not an instruction they never
+    // wrote — and the finished result once it has actually been checked.
+    requestFix(brief, true);
   }, [messages.length, monitor, planStatus, requestFix, running]);
 
   /**
@@ -732,12 +735,52 @@ function Chat({
   );
 }
 
+
+/**
+ * One line for the transcript, taken from the manager's own findings.
+ *
+ * The brief that goes to the model is long and blunt on purpose. None of that
+ * belongs on screen: what the user needs is the reason the work came back.
+ */
+function managerLine(brief: string): string {
+  const lines = brief
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  // The first line is the instruction to the model; the second is the finding.
+  const finding = lines[1] ?? lines[0] ?? "";
+  const summary = finding.replace(/^[-*]\s*/, "").slice(0, 160);
+  return summary ? `Sent back: ${summary}` : "Sent back to finish the work.";
+}
+
+const ManagerMark = () => (
+  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M12 3l7 4v5c0 4.2-2.9 7.8-7 9-4.1-1.2-7-4.8-7-9V7l7-4z" />
+    <path d="M9 12l2 2 4-4" />
+  </svg>
+);
+
 /** A user message: quiet surface, relative time, actions on hover. */
 function UserTurn({ message }: { message: ChatMessage }) {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   const long = message.content.length > 420;
   const text = long && !expanded ? `${message.content.slice(0, 420).trimEnd()}…` : message.content;
+
+  // The manager sending work back is not something the user said, and showing
+  // it as their own message makes the transcript a record of things they never
+  // wrote. It appears as what it is: Nomin taking the work back, stated once,
+  // without the brief it sent behind the scenes.
+  if (message.internal) {
+    return (
+      <article className="turn internal">
+        <p className="internal-note">
+          <ManagerMark />
+          <span>{managerLine(message.content)}</span>
+        </p>
+      </article>
+    );
+  }
 
   return (
     <article className="turn user">

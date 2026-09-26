@@ -24,6 +24,12 @@ import {
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  /**
+   * A turn Nomin started on the user's behalf — the manager sending the work
+   * back. It travels to the model as an ordinary instruction, but it is not
+   * shown as though the user typed it.
+   */
+  internal?: boolean;
   /** What was attached to this message, so the transcript still shows it. */
   attachments?: Array<{ name: string; kind: string; note?: string }>;
   error?: boolean;
@@ -226,6 +232,7 @@ export function useAgent() {
       // the value captured before the click, and the tools would never unlock.
       planOverride?: Plan | null,
       attachments?: PreparedAttachment[],
+      internal = false,
     ) => {
       const prompt = text.trim();
       if (!prompt || abort.current) return;
@@ -253,6 +260,7 @@ export function useAgent() {
           role: "user",
           content: prompt,
           at: now,
+          internal: internal || undefined,
           attachments: attachments?.map((item) => ({
             name: item.name,
             kind: item.kind,

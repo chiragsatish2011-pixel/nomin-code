@@ -904,3 +904,31 @@ button { font: inherit; color: inherit; cursor: pointer; border: none; backgroun
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 10.5px;
 }
+
+/* The manager taking work back — Nomin's own turn, not the user's. */
+.turn.internal {
+  display: flex;
+  justify-content: flex-start;
+  margin: 2px 0 10px;
+}
+
+.internal-note {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 78%;
+  margin: 0;
+  padding: 7px 12px 7px 10px;
+  border: 1px solid color-mix(in oklab, var(--aurora-2, #38e8c8) 22%, transparent);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--aurora-2, #38e8c8) 7%, transparent);
+  color: var(--muted, rgba(255, 255, 255, 0.62));
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.internal-note svg {
+  flex: none;
+  margin-top: 1px;
+  color: color-mix(in oklab, var(--aurora-2, #38e8c8) 80%, var(--fg, #fff));
+}
