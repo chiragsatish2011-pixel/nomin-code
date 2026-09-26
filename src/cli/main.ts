@@ -5,7 +5,15 @@ import { join, dirname } from "node:path";
 import { runTurn } from "../model/agent.js";
 import { parsePlan, type Plan } from "../model/plan.js";
 import { parseQuestions, formatAnswers } from "../lib/questions.js";
-import { getModel, listModels } from "../model/registry.js";
+import {
+  DEFAULT_MODEL,
+  listModels,
+  modelConfigured,
+  SUPERVISOR,
+  SUPERVISOR_MODEL_ENVS,
+  TRION_1_5,
+  type ModelDescriptor,
+} from "../model/registry.js";
 import { availableDoctors } from "../model/doctors.js";
 import { Workspace } from "../model/workspace.js";
 import { TerminalTree } from "./tree.js";
@@ -228,14 +236,25 @@ async function confirm(): Promise<boolean> {
   }
 }
 
+/** One seat's configuration, without naming what it runs on. */
+function describeSeat(model: ModelDescriptor, extra: string[] = [], env = process.env): string {
+  if (modelConfigured(model, env, extra)) return "configured";
+  const key = Boolean(model.apiKeyEnv && env[model.apiKeyEnv]);
+  const names = [model.backendEnv, ...extra].filter(Boolean) as string[];
+  const backend = names.some((name) => env[name]);
+  if (!key && !backend) return "missing (no key, no model)";
+  return key ? `missing ${names[0]}` : `missing ${model.apiKeyEnv}`;
+}
+
 /** What this install can actually do — the terminal's /api/health. */
 function status(): number {
-  const model = getModel();
   const doctors = availableDoctors().length;
   stdout.write(`Nomin Code\n`);
-  stdout.write(`  model      ${model.name}\n`);
-  stdout.write(`  worker     ${process.env.NVIDIA_API_KEY ? "configured" : "missing"}\n`);
-  stdout.write(`  manager    ${process.env.NOMIN_SUPERVISOR_API_KEY ? "configured" : "missing"}\n`);
+  stdout.write(`  model      ${DEFAULT_MODEL}\n`);
+  // Naming the missing half matters: "missing" against a key that is present
+  // sends someone hunting the wrong variable.
+  stdout.write(`  worker     ${describeSeat(TRION_1_5)}\n`);
+  stdout.write(`  manager    ${describeSeat(SUPERVISOR, SUPERVISOR_MODEL_ENVS)}\n`);
   stdout.write(`  doctors    ${doctors} of 6 configured\n`);
   stdout.write(
     `  planned    ${listModels()

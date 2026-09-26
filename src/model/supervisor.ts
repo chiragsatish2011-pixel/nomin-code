@@ -1,5 +1,11 @@
 import { NvidiaProvider } from "./nvidia.js";
-import { SUPERVISOR, type ModelDescriptor } from "./registry.js";
+import {
+  modelConfigured,
+  resolveBackend,
+  SUPERVISOR,
+  SUPERVISOR_MODEL_ENVS,
+  type ModelDescriptor,
+} from "./registry.js";
 import type { ContentPart, Message } from "./types.js";
 
 /**
@@ -119,12 +125,17 @@ const WORK_EVENTS = new Set([
 
 export function createSupervisor(env = process.env): Supervisor {
   const key = env[SUPERVISOR.apiKeyEnv ?? "NOMIN_SUPERVISOR_API_KEY"] ?? "";
-  const model: ModelDescriptor = {
-    ...SUPERVISOR,
-    backend: env.NOMIN_SUPERVISOR_MODEL ?? SUPERVISOR.backend,
-    endpoint: env.NOMIN_SUPERVISOR_URL ?? SUPERVISOR.endpoint,
-  };
-  return new Supervisor({ model, apiKey: key, stallMs: 45_000 });
+  // Optional in both directions: a credential with no model to spend it on is
+  // as unconfigured as no credential. Either way the monitor falls back to
+  // evidence rather than failing the user's turn over its own configuration.
+  const ready = Boolean(key) && modelConfigured(SUPERVISOR, env, SUPERVISOR_MODEL_ENVS);
+  const model: ModelDescriptor = ready
+    ? {
+        ...resolveBackend(SUPERVISOR, env, SUPERVISOR_MODEL_ENVS),
+        ...(env.NOMIN_SUPERVISOR_URL ? { endpoint: env.NOMIN_SUPERVISOR_URL } : {}),
+      }
+    : SUPERVISOR;
+  return new Supervisor({ model, apiKey: ready ? key : "", stallMs: 45_000 });
 }
 
 export class Supervisor {

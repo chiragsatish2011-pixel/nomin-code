@@ -125,12 +125,12 @@ notices and describes, the doctors diagnose and repair.
 
 | Doctor | Role | Runs on |
 |---|---|---|
-| D1 | Diagnosis — traces the fault | 550B Ultra |
-| D2 | Repair — writes the fix | 120B Super |
-| D3 | Verification — proves it holds | 120B Super |
-| D4 | Regression — hunts knock-on damage | 120B Super |
-| D5 | Surface — checks what the user sees | 30B omni (vision) |
-| D6 | Record — writes down what changed | 30B omni |
+| D1 | Diagnosis — traces the fault | strongest available |
+| D2 | Repair — writes the fix | strongest available |
+| D3 | Verification — proves it holds | mid tier |
+| D4 | Regression — hunts knock-on damage | mid tier |
+| D5 | Surface — checks what the user sees | small, vision |
+| D6 | Record — writes down what changed | small |
 
 Each holds **its own credential** (`NOMIN_DOCTOR_1..6_API_KEY`), so six repairs
 run at once without touching the worker's or the manager's rate budget.
@@ -245,18 +245,28 @@ Development**:
 | Variable | Needed for |
 |---|---|
 | `NVIDIA_API_KEY` | Trion 1.5 — without it nothing runs |
-| `NVIDIA_BASE_URL` | the provider endpoint |
+| `NOMIN_WORKER_MODEL` | Trion 1.5's backend id — **without it nothing runs** |
+| `NOMIN_BASE_URL` | the provider endpoint (`NVIDIA_BASE_URL` still works) |
 | `NOMIN_SUPERVISOR_API_KEY` | the manager, and the vision fallback |
+| `NOMIN_SUPERVISOR_MODEL` | the manager's backend id (`NOMIN_VISION_MODEL` also works) |
 | `NOMIN_VISION_API_KEY` | optional: a separate key for vision |
+| `NOMIN_VISION_MODEL` | optional: a separate model for vision |
 | `NOMIN_DOCTOR_1..6_API_KEY` | the doctor team |
+| `NOMIN_DOCTOR_1..6_MODEL` | each doctor's backend id |
+
+A seat needs **both** halves. A key with no model identifier behind it is not a
+configured seat, and the first turn fails on the missing model rather than on
+anything the user did — so `/api/health`, `nomin --status` and the error itself
+each name the variable to set.
 
 Redeploy after adding them — Vercel only injects variables at build time.
 
-Then check `/api/health`. It reports which credentials are present (never their
-values) and what the host can do:
+Then check `/api/health`. It reports which seats are configured (never their
+values), names any variable still missing, and says what the host can do:
 
 ```json
 { "ok": true, "worker": true, "manager": true, "vision": true, "doctors": 6,
+  "missing": [],
   "environment": "serverless",
   "capabilities": { "tools": true, "commands": false, "evidence": false } }
 ```

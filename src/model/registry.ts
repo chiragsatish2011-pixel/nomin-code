@@ -31,7 +31,15 @@ export interface ModelDescriptor {
   name: string;
   role: ModelRole;
   status: ModelStatus;
-  /** Backend model identifier at the provider. */
+  /**
+   * The environment variable carrying this seat's backend model identifier.
+   * The identifier itself is never written here — see the note below.
+   */
+  backendEnv?: string;
+  /**
+   * The backend model identifier, once read from the environment. A
+   * declaration leaves it unset; `resolveBackend` is what fills it in.
+   */
   backend?: string;
   provider?: "nvidia";
   endpoint?: string;
@@ -71,23 +79,36 @@ const DEFAULT_RETRY: RetryPolicy = {
  * and the fallbacks here are deliberately generic so a missing variable
  * produces a clear failure rather than a quiet disclosure.
  */
-export function backendOf(key: string, fallback = ""): string {
-  const fromEnv =
-    typeof process !== "undefined" ? (process.env?.[key] ?? "") : "";
-  return fromEnv || fallback;
+export function backendOf(key: string, fallback = "", env = readEnv()): string {
+  return (env[key] ?? "").trim() || fallback;
 }
 
-export function endpointOf(fallback = ""): string {
-  return backendOf("NOMIN_BASE_URL", fallback);
+/**
+ * The provider's base URL. Unlike a model identifier this is an address, not a
+ * disclosure — it says nothing about which model answers on it — so it has a
+ * real default. It had none, and every seat resolved to an empty endpoint
+ * wherever `NOMIN_BASE_URL` was unset, which is every deployment configured
+ * before that variable existed: the request then went to a relative path and
+ * failed in a way that pointed nowhere near the cause. `NVIDIA_BASE_URL` is
+ * still honoured because it is what the older deployments and the README set.
+ */
+export function endpointOf(fallback = DEFAULT_ENDPOINT, env = readEnv()): string {
+  return backendOf("NOMIN_BASE_URL", "", env) || backendOf("NVIDIA_BASE_URL", fallback, env);
+}
+
+const DEFAULT_ENDPOINT = "https://integrate.api.nvidia.com/v1";
+
+/** The environment, or an empty one in a bundle that has no `process`. */
+function readEnv(): NodeJS.ProcessEnv {
+  return typeof process !== "undefined" && process.env ? process.env : ({} as NodeJS.ProcessEnv);
 }
 
 export const TRION_1_5: ModelDescriptor = {
   name: "Trion 1.5",
   role: "worker",
   status: "available",
-  backend: backendOf("NOMIN_WORKER_MODEL"),
+  backendEnv: "NOMIN_WORKER_MODEL",
   provider: "nvidia",
-  endpoint: endpointOf(),
   apiKeyEnv: "NVIDIA_API_KEY",
   contextTokens: 128_000,
   maxOutputTokens: 8192,
@@ -95,8 +116,9 @@ export const TRION_1_5: ModelDescriptor = {
   retry: DEFAULT_RETRY,
   timeoutMs: 180_000,
   notes:
-    "Nemotron 3 Ultra streams a separate reasoning channel and rejects inline " +
-    "thinking directives such as /no_think in the system prompt.",
+    "The worker streams a separate reasoning channel and rejects inline " +
+    "thinking directives such as /no_think in the system prompt; the thinking " +
+    "pass is switched off through the chat template instead.",
 };
 
 export const NECT_1_3: ModelDescriptor = {
@@ -130,9 +152,8 @@ export const SUPERVISOR: ModelDescriptor = {
   name: "Nomin Monitor",
   role: "supervisor",
   status: "available",
-  backend: backendOf("NOMIN_VISION_MODEL"),
+  backendEnv: "NOMIN_SUPERVISOR_MODEL",
   provider: "nvidia",
-  endpoint: endpointOf(),
   apiKeyEnv: "NOMIN_SUPERVISOR_API_KEY",
   contextTokens: 128_000,
   maxOutputTokens: 900,
@@ -153,14 +174,65 @@ export const MODELS: Record<string, ModelDescriptor> = {
 /** The model the agent runs on today. */
 export const DEFAULT_MODEL = "Trion 1.5";
 
-export function getModel(name: string = DEFAULT_MODEL): ModelDescriptor {
+/**
+ * Fill in a descriptor's backend and endpoint from the environment.
+ *
+ * Read when the seat is used, not when this module is imported. Capturing the
+ * values at import time meant a host that populates the environment around the
+ * module — a serverless function on a cold start, the dev server's own config
+ * step, a test passing its own environment in — got whatever happened to be set
+ * at that instant, and nothing later could correct it.
+ *
+ * `extra` names variables to fall back to, for a seat that shares its model
+ * with another: the monitor and the vision pass are the same model on the same
+ * key, so either variable configures both.
+ */
+export function resolveBackend(
+  model: ModelDescriptor,
+  env: NodeJS.ProcessEnv = readEnv(),
+  extra: string[] = [],
+): ModelDescriptor {
+  const names = [model.backendEnv, ...extra].filter(Boolean) as string[];
+  const backend = names.map((name) => (env[name] ?? "").trim()).find(Boolean) ?? model.backend ?? "";
+  if (!backend) {
+    throw new Error(
+      `${model.name} has no backend model configured. Set ${names[0] ?? "its model variable"} ` +
+        `in this deployment's environment variables.`,
+    );
+  }
+  return { ...model, backend, endpoint: model.endpoint ?? endpointOf(undefined, env) };
+}
+
+/**
+ * Whether a seat could actually run: a credential *and* a model identifier.
+ * Both halves, because a health check that reports one is how a deployment
+ * looks ready and then fails its first turn.
+ */
+export function modelConfigured(
+  model: ModelDescriptor,
+  env: NodeJS.ProcessEnv = readEnv(),
+  extra: string[] = [],
+): boolean {
+  const hasKey = Boolean(model.apiKeyEnv && env[model.apiKeyEnv]);
+  const names = [model.backendEnv, ...extra].filter(Boolean) as string[];
+  const hasBackend = names.some((name) => env[name]) || Boolean(model.backend);
+  return hasKey && hasBackend;
+}
+
+export function getModel(
+  name: string = DEFAULT_MODEL,
+  env: NodeJS.ProcessEnv = readEnv(),
+): ModelDescriptor {
   const model = MODELS[name];
   if (!model) throw new Error(`Unknown model: ${name}`);
   if (model.status === "planned") {
     throw new Error(`${model.name} is not integrated yet — use ${DEFAULT_MODEL}.`);
   }
-  return model;
+  return resolveBackend(model, env);
 }
+
+/** The variables that configure the monitor seat, which vision shares. */
+export const SUPERVISOR_MODEL_ENVS = ["NOMIN_SUPERVISOR_MODEL", "NOMIN_VISION_MODEL"];
 
 export const listModels = () => Object.values(MODELS);
 

@@ -1,6 +1,13 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { runTurn } from "../model/agent.js";
 import { captureBaseline, diffFromBaseline, isStale, loadBaseline } from "../model/evidence.js";
+import { availableDoctors } from "../model/doctors.js";
+import {
+  modelConfigured,
+  SUPERVISOR,
+  SUPERVISOR_MODEL_ENVS,
+  TRION_1_5,
+} from "../model/registry.js";
 import { createSupervisor } from "../model/supervisor.js";
 import { describeMedia, visionContext } from "../model/vision.js";
 import { Workspace } from "../model/workspace.js";
@@ -235,10 +242,21 @@ export function handleHealth(_req: IncomingMessage, res: ServerResponse): void {
     ok: true,
     // Never the key itself, and never the backend's name — only whether the
     // deployment is configured at all.
-    worker: Boolean(process.env.NVIDIA_API_KEY),
-    manager: Boolean(process.env.NOMIN_SUPERVISOR_API_KEY),
-    vision: Boolean(process.env.NOMIN_VISION_API_KEY || process.env.NOMIN_SUPERVISOR_API_KEY),
-    doctors: [1, 2, 3, 4, 5, 6].filter((n) => process.env[`NOMIN_DOCTOR_${n}_API_KEY`]).length,
+    // A seat needs a credential *and* a model identifier. Reporting only the
+    // key is how a deployment answers "ok" and then fails its first turn with
+    // a missing-backend error that nothing here predicted.
+    worker: modelConfigured(TRION_1_5),
+    manager: modelConfigured(SUPERVISOR, process.env, SUPERVISOR_MODEL_ENVS),
+    vision:
+      Boolean(process.env.NOMIN_VISION_API_KEY || process.env.NOMIN_SUPERVISOR_API_KEY) &&
+      SUPERVISOR_MODEL_ENVS.some((name) => process.env[name]),
+    doctors: availableDoctors().length,
+    // Which half is missing, named, so a broken deployment can be diagnosed
+    // from the health endpoint instead of from a red line in the transcript.
+    missing: [
+      !process.env.NVIDIA_API_KEY && "NVIDIA_API_KEY",
+      !process.env.NOMIN_WORKER_MODEL && "NOMIN_WORKER_MODEL",
+    ].filter(Boolean),
     environment: serverless ? "serverless" : "server",
     capabilities: {
       tools: true,

@@ -1,6 +1,6 @@
 import { CrpmScheduler, splitWork } from "./crpm.js";
 import { NvidiaProvider } from "./nvidia.js";
-import { SUPERVISOR, type ModelDescriptor } from "./registry.js";
+import { endpointOf, SUPERVISOR, SUPERVISOR_MODEL_ENVS, type ModelDescriptor } from "./registry.js";
 import type { ContentPart, Message } from "./types.js";
 
 /**
@@ -56,12 +56,19 @@ function visionModel(env: NodeJS.ProcessEnv): { model: ModelDescriptor; key: str
   // The monitor's multimodal model does this job too; it is already on its own
   // credential, which is exactly what CRPM wants.
   const key = env.NOMIN_VISION_API_KEY ?? env[SUPERVISOR.apiKeyEnv ?? ""] ?? "";
-  if (!key) return null;
+  // Its own model variable when the deployment gives it one, the monitor's
+  // otherwise — the same seat serves both. No identifier is written here, so
+  // without either variable vision is simply unavailable and says so.
+  const backend = SUPERVISOR_MODEL_ENVS.map((name) => (env[name] ?? "").trim()).find(Boolean) ?? "";
+  if (!key || !backend) return null;
   return {
     model: {
       ...SUPERVISOR,
       name: "Nomin Vision",
-      backend: env.NOMIN_VISION_MODEL ?? SUPERVISOR.backend,
+      // Already resolved: the descriptor carries the value, not the variable.
+      backendEnv: undefined,
+      backend,
+      endpoint: endpointOf(undefined, env),
       maxOutputTokens: 700,
     },
     key,

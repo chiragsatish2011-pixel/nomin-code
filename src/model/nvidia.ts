@@ -2,7 +2,11 @@ import type { ModelDescriptor } from "./registry.js";
 import type { ChatRequest, Provider, StreamEvent, ToolCall } from "./types.js";
 
 /**
- * NVIDIA provider for Trion 1.5 (Nemotron 3 Ultra 550B A55B).
+ * The provider Trion 1.5 and the review seats run on.
+ *
+ * Which backend model answers is a deployment setting, resolved from the
+ * environment by the registry — this class is handed a descriptor and never
+ * names a model itself.
  *
  * The endpoint is OpenAI-compatible with two wrinkles that matter:
  *  - it streams a separate `reasoning_content` channel (private — the agent
@@ -20,9 +24,17 @@ export class NvidiaProvider implements Provider {
     if (!apiKey) throw new Error(`Missing ${model.apiKeyEnv} — set it in .env`);
     // A blank backend means the identifier was never configured. Failing here
     // is far better than sending an empty model name and reading the
-    // provider's confused answer as a Nomin bug.
+    // provider's confused answer as a Nomin bug. The variable is named, and
+    // not as a file: a hosted deployment has no .env to edit, and being sent
+    // to one is how a correct diagnosis still wastes an afternoon.
     if (!model.backend) {
-      throw new Error(`Missing the backend id for ${model.name} — set it in .env`);
+      throw new Error(
+        `${model.name} has no backend model configured. Set ${model.backendEnv ?? "its model variable"} ` +
+          `in this deployment's environment variables, then redeploy.`,
+      );
+    }
+    if (!model.endpoint) {
+      throw new Error(`${model.name} has no endpoint configured.`);
     }
     this.model = model;
     this.apiKey = apiKey;

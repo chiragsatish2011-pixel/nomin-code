@@ -1,4 +1,4 @@
-import { backendOf, endpointOf } from "./registry.js";
+import { resolveBackend } from "./registry.js";
 import type { ModelDescriptor, RetryPolicy } from "./registry.js";
 
 /**
@@ -11,6 +11,11 @@ import type { ModelDescriptor, RetryPolicy } from "./registry.js";
  * Each doctor holds its own credential. That is the whole point of the design —
  * six repairs can run at once without any of them consuming the worker's or the
  * manager's rate budget, and one doctor hitting a limit never stalls the rest.
+ *
+ * A doctor's *role* is written here, because the role is what the manager
+ * splits work by. Which backend serves that role is not: each doctor names the
+ * environment variable carrying its model identifier, so this file describes
+ * the team without disclosing it. A doctor missing either half is off duty.
  */
 
 export type DoctorId = "d1" | "d2" | "d3" | "d4" | "d5" | "d6";
@@ -21,7 +26,11 @@ export interface DoctorSpec {
   role: string;
   /** One line the user may see. Never mentions models, vendors or code. */
   publicLabel: string;
-  backend: string;
+  /**
+   * The environment variable carrying this doctor's backend model identifier.
+   * Read when the doctor is called, not when this module loads.
+   */
+  backendEnv: string;
   apiKeyEnv: string;
   maxOutputTokens: number;
   temperature: number;
@@ -44,10 +53,9 @@ export const DOCTORS: DoctorSpec[] = [
     id: "d1",
     role: "diagnosis",
     publicLabel: "Tracing the fault",
-    // The 253B Nemotron is listed by the provider but not servable (404), so
-    // diagnosis runs on the 550B Ultra — on its own key, so it never competes
-    // with Trion for the worker budget.
-    backend: backendOf("NOMIN_DOCTOR_1_MODEL"),
+    // Diagnosis gets the strongest model the deployment has, on its own key,
+    // so it never competes with Trion for the worker budget.
+    backendEnv: "NOMIN_DOCTOR_1_MODEL",
     apiKeyEnv: "NOMIN_DOCTOR_1_API_KEY",
     maxOutputTokens: 4096,
     temperature: 0.1,
@@ -56,7 +64,7 @@ export const DOCTORS: DoctorSpec[] = [
     id: "d2",
     role: "repair",
     publicLabel: "Writing the repair",
-    backend: backendOf("NOMIN_DOCTOR_2_MODEL"),
+    backendEnv: "NOMIN_DOCTOR_2_MODEL",
     apiKeyEnv: "NOMIN_DOCTOR_2_API_KEY",
     maxOutputTokens: 8192,
     temperature: 0.15,
@@ -65,7 +73,7 @@ export const DOCTORS: DoctorSpec[] = [
     id: "d3",
     role: "verification",
     publicLabel: "Checking the repair holds",
-    backend: backendOf("NOMIN_DOCTOR_3_MODEL"),
+    backendEnv: "NOMIN_DOCTOR_3_MODEL",
     apiKeyEnv: "NOMIN_DOCTOR_3_API_KEY",
     maxOutputTokens: 4096,
     temperature: 0,
@@ -74,7 +82,7 @@ export const DOCTORS: DoctorSpec[] = [
     id: "d4",
     role: "regression",
     publicLabel: "Looking for knock-on damage",
-    backend: backendOf("NOMIN_DOCTOR_4_MODEL"),
+    backendEnv: "NOMIN_DOCTOR_4_MODEL",
     apiKeyEnv: "NOMIN_DOCTOR_4_API_KEY",
     maxOutputTokens: 4096,
     temperature: 0.1,
@@ -83,7 +91,7 @@ export const DOCTORS: DoctorSpec[] = [
     id: "d5",
     role: "surface",
     publicLabel: "Checking what the user sees",
-    backend: backendOf("NOMIN_DOCTOR_5_MODEL"),
+    backendEnv: "NOMIN_DOCTOR_5_MODEL",
     apiKeyEnv: "NOMIN_DOCTOR_5_API_KEY",
     maxOutputTokens: 2048,
     temperature: 0,
@@ -92,21 +100,20 @@ export const DOCTORS: DoctorSpec[] = [
     id: "d6",
     role: "record",
     publicLabel: "Recording what changed",
-    backend: backendOf("NOMIN_DOCTOR_6_MODEL"),
+    backendEnv: "NOMIN_DOCTOR_6_MODEL",
     apiKeyEnv: "NOMIN_DOCTOR_6_API_KEY",
     maxOutputTokens: 2048,
     temperature: 0,
   },
 ];
 
-export function doctorModel(spec: DoctorSpec): ModelDescriptor {
-  return {
+export function doctorModel(spec: DoctorSpec, env = process.env): ModelDescriptor {
+  return resolveBackend({
     name: `Doctor ${spec.id.toUpperCase()}`,
     role: "supervisor",
     status: "available",
-    backend: spec.backend,
+    backendEnv: spec.backendEnv,
     provider: "nvidia",
-    endpoint: endpointOf(),
     apiKeyEnv: spec.apiKeyEnv,
     contextTokens: 128_000,
     maxOutputTokens: spec.maxOutputTokens,
@@ -114,10 +121,14 @@ export function doctorModel(spec: DoctorSpec): ModelDescriptor {
     retry: DEFAULT_RETRY,
     timeoutMs: 180_000,
     notes: `Repair role: ${spec.role}. Never talks to the user directly.`,
-  };
+  }, env);
 }
 
-/** Which doctors have a usable credential right now. */
+/**
+ * Which doctors could actually work right now. A doctor needs both its own
+ * credential and a model to spend it on; counting one without the other is how
+ * "6 of 6 configured" ends up in front of a team that cannot run.
+ */
 export function availableDoctors(env = process.env): DoctorSpec[] {
-  return DOCTORS.filter((doctor) => Boolean(env[doctor.apiKeyEnv]));
+  return DOCTORS.filter((doctor) => Boolean(env[doctor.apiKeyEnv] && env[doctor.backendEnv]));
 }
